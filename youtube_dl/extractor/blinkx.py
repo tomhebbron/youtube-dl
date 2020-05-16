@@ -1,49 +1,41 @@
 from __future__ import unicode_literals
 
-import datetime
 import json
-import re
 
 from .common import InfoExtractor
 from ..utils import (
     remove_start,
+    int_or_none,
 )
 
 
 class BlinkxIE(InfoExtractor):
-    _VALID_URL = r'^(?:https?://(?:www\.)blinkx\.com/#?ce/|blinkx:)(?P<id>[^?]+)'
+    _VALID_URL = r'(?:https?://(?:www\.)blinkx\.com/#?ce/|blinkx:)(?P<id>[^?]+)'
     IE_NAME = 'blinkx'
 
     _TEST = {
-        'url': 'http://www.blinkx.com/ce/8aQUy7GVFYgFzpKhT0oqsilwOGFRVXk3R1ZGWWdGenBLaFQwb3FzaWx3OGFRVXk3R1ZGWWdGenB',
-        'file': '8aQUy7GV.mp4',
-        'md5': '2e9a07364af40163a908edbf10bb2492',
+        'url': 'http://www.blinkx.com/ce/Da0Gw3xc5ucpNduzLuDDlv4WC9PuI4fDi1-t6Y3LyfdY2SZS5Urbvn-UPJvrvbo8LTKTc67Wu2rPKSQDJyZeeORCR8bYkhs8lI7eqddznH2ofh5WEEdjYXnoRtj7ByQwt7atMErmXIeYKPsSDuMAAqJDlQZ-3Ff4HJVeH_s3Gh8oQ',
+        'md5': '337cf7a344663ec79bf93a526a2e06c7',
         'info_dict': {
-            "title": "Police Car Rolls Away",
-            "uploader": "stupidvideos.com",
-            "upload_date": "20131215",
-            "description": "A police car gently rolls away from a fight. Maybe it felt weird being around a confrontation and just had to get out of there!",
-            "duration": 14.886,
-            "thumbnails": [{
-                "width": 100,
-                "height": 76,
-                "url": "http://cdn.blinkx.com/stream/b/41/StupidVideos/20131215/1873969261/1873969261_tn_0.jpg",
-            }],
+            'id': 'Da0Gw3xc',
+            'ext': 'mp4',
+            'title': 'No Daily Show for John Oliver; HBO Show Renewed - IGN News',
+            'uploader': 'IGN News',
+            'upload_date': '20150217',
+            'timestamp': 1424215740,
+            'description': 'HBO has renewed Last Week Tonight With John Oliver for two more seasons.',
+            'duration': 47.743333,
         },
     }
 
-    def _real_extract(self, rl):
-        m = re.match(self._VALID_URL, rl)
-        video_id = m.group('id')
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
         display_id = video_id[:8]
 
-        api_url = (u'https://apib4.blinkx.com/api.php?action=play_video&' +
-                   'video=%s' % video_id)
+        api_url = ('https://apib4.blinkx.com/api.php?action=play_video&'
+                   + 'video=%s' % video_id)
         data_json = self._download_webpage(api_url, display_id)
         data = json.loads(data_json)['api']['results'][0]
-        dt = datetime.datetime.fromtimestamp(data['pubdate_epoch'])
-        pload_date = dt.strftime('%Y%m%d')
-
         duration = None
         thumbnails = []
         formats = []
@@ -55,29 +47,28 @@ class BlinkxIE(InfoExtractor):
                     'height': int(m['h']),
                 })
             elif m['type'] == 'original':
-                duration = m['d']
+                duration = float(m['d'])
             elif m['type'] == 'youtube':
                 yt_id = m['link']
-                self.to_screen(u'Youtube video detected: %s' % yt_id)
+                self.to_screen('Youtube video detected: %s' % yt_id)
                 return self.url_result(yt_id, 'Youtube', video_id=yt_id)
             elif m['type'] in ('flv', 'mp4'):
                 vcodec = remove_start(m['vcodec'], 'ff')
                 acodec = remove_start(m['acodec'], 'ff')
-                tbr = (int(m['vbr']) + int(m['abr'])) // 1000
-                format_id = (u'%s-%sk-%s' %
-                             (vcodec,
-                              tbr,
-                              m['w']))
+                vbr = int_or_none(m.get('vbr') or m.get('vbitrate'), 1000)
+                abr = int_or_none(m.get('abr') or m.get('abitrate'), 1000)
+                tbr = vbr + abr if vbr and abr else None
+                format_id = '%s-%sk-%s' % (vcodec, tbr, m['w'])
                 formats.append({
                     'format_id': format_id,
                     'url': m['link'],
                     'vcodec': vcodec,
                     'acodec': acodec,
-                    'abr': int(m['abr']) // 1000,
-                    'vbr': int(m['vbr']) // 1000,
+                    'abr': abr,
+                    'vbr': vbr,
                     'tbr': tbr,
-                    'width': int(m['w']),
-                    'height': int(m['h']),
+                    'width': int_or_none(m.get('w')),
+                    'height': int_or_none(m.get('h')),
                 })
 
         self._sort_formats(formats)
@@ -88,7 +79,7 @@ class BlinkxIE(InfoExtractor):
             'title': data['title'],
             'formats': formats,
             'uploader': data['channel_name'],
-            'upload_date': pload_date,
+            'timestamp': data['pubdate_epoch'],
             'description': data.get('description'),
             'thumbnails': thumbnails,
             'duration': duration,

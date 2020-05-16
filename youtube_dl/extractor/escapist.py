@@ -1,84 +1,111 @@
-import json
-import re
+from __future__ import unicode_literals
 
 from .common import InfoExtractor
 from ..utils import (
-    compat_str,
-    compat_urllib_parse,
-
-    ExtractorError,
+    determine_ext,
+    clean_html,
+    int_or_none,
+    float_or_none,
 )
 
 
+def _decrypt_config(key, string):
+    a = ''
+    i = ''
+    r = ''
+
+    while len(a) < (len(string) / 2):
+        a += key
+
+    a = a[0:int(len(string) / 2)]
+
+    t = 0
+    while t < len(string):
+        i += chr(int(string[t] + string[t + 1], 16))
+        t += 2
+
+    icko = [s for s in i]
+
+    for t, c in enumerate(a):
+        r += chr(ord(c) ^ ord(icko[t]))
+
+    return r
+
+
 class EscapistIE(InfoExtractor):
-    _VALID_URL = r'^https?://?(www\.)?escapistmagazine\.com/videos/view/(?P<showname>[^/]+)/(?P<episode>[^/?]+)[/?]?.*$'
-    _TEST = {
-        u'url': u'http://www.escapistmagazine.com/videos/view/the-escapist-presents/6618-Breaking-Down-Baldurs-Gate',
-        u'file': u'6618-Breaking-Down-Baldurs-Gate.mp4',
-        u'md5': u'ab3a706c681efca53f0a35f1415cf0d1',
-        u'info_dict': {
-            u"description": u"Baldur's Gate: Original, Modded or Enhanced Edition? I'll break down what you can expect from the new Baldur's Gate: Enhanced Edition.", 
-            u"uploader": u"the-escapist-presents", 
-            u"title": u"Breaking Down Baldur's Gate"
+    _VALID_URL = r'https?://?(?:(?:www|v1)\.)?escapistmagazine\.com/videos/view/[^/]+/(?P<id>[0-9]+)'
+    _TESTS = [{
+        'url': 'http://www.escapistmagazine.com/videos/view/the-escapist-presents/6618-Breaking-Down-Baldurs-Gate',
+        'md5': 'ab3a706c681efca53f0a35f1415cf0d1',
+        'info_dict': {
+            'id': '6618',
+            'ext': 'mp4',
+            'description': "Baldur's Gate: Original, Modded or Enhanced Edition? I'll break down what you can expect from the new Baldur's Gate: Enhanced Edition.",
+            'title': "Breaking Down Baldur's Gate",
+            'thumbnail': r're:^https?://.*\.jpg$',
+            'duration': 264,
+            'uploader': 'The Escapist',
         }
-    }
+    }, {
+        'url': 'http://www.escapistmagazine.com/videos/view/zero-punctuation/10044-Evolve-One-vs-Multiplayer',
+        'md5': '9e8c437b0dbb0387d3bd3255ca77f6bf',
+        'info_dict': {
+            'id': '10044',
+            'ext': 'mp4',
+            'description': 'This week, Zero Punctuation reviews Evolve.',
+            'title': 'Evolve - One vs Multiplayer',
+            'thumbnail': r're:^https?://.*\.jpg$',
+            'duration': 304,
+            'uploader': 'The Escapist',
+        }
+    }, {
+        'url': 'http://escapistmagazine.com/videos/view/the-escapist-presents/6618',
+        'only_matching': True,
+    }, {
+        'url': 'https://v1.escapistmagazine.com/videos/view/the-escapist-presents/6618-Breaking-Down-Baldurs-Gate',
+        'only_matching': True,
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        showName = mobj.group('showname')
-        videoId = mobj.group('episode')
+        video_id = self._match_id(url)
+        webpage = self._download_webpage(url, video_id)
 
-        self.report_extraction(videoId)
-        webpage = self._download_webpage(url, videoId)
+        ims_video = self._parse_json(
+            self._search_regex(
+                r'imsVideo\.play\(({.+?})\);', webpage, 'imsVideo'),
+            video_id)
+        video_id = ims_video['videoID']
+        key = ims_video['hash']
 
-        videoDesc = self._html_search_regex(
-            r'<meta name="description" content="([^"]*)"',
-            webpage, u'description', fatal=False)
-
-        playerUrl = self._og_search_video_url(webpage, name=u'player URL')
-
-        title = self._html_search_regex(
-            r'<meta name="title" content="([^"]*)"',
-            webpage, u'title').split(' : ')[-1]
-
-        configUrl = self._search_regex('config=(.*)$', playerUrl, u'config URL')
-        configUrl = compat_urllib_parse.unquote(configUrl)
-
-        formats = []
-
-        def _add_format(name, cfgurl):
-            configJSON = self._download_webpage(
-                cfgurl, videoId,
-                u'Downloading ' + name + ' configuration',
-                u'Unable to download ' + name + ' configuration')
-
-            # Technically, it's JavaScript, not JSON
-            configJSON = configJSON.replace("'", '"')
-
-            try:
-                config = json.loads(configJSON)
-            except (ValueError,) as err:
-                raise ExtractorError(u'Invalid JSON in configuration file: ' + compat_str(err))
-            playlist = config['playlist']
-            formats.append({
-                'url': playlist[1]['url'],
-                'format_id': name,
+        config = self._download_webpage(
+            'http://www.escapistmagazine.com/videos/vidconfig.php',
+            video_id, 'Downloading video config', headers={
+                'Referer': url,
+            }, query={
+                'videoID': video_id,
+                'hash': key,
             })
 
-        _add_format(u'normal', configUrl)
-        hq_url = (configUrl +
-                  ('&hq=1' if '?' in configUrl else configUrl + '?hq=1'))
-        try:
-            _add_format(u'hq', hq_url)
-        except ExtractorError:
-            pass  # That's fine, we'll just use normal quality
+        data = self._parse_json(_decrypt_config(key, config), video_id)
+
+        video_data = data['videoData']
+
+        title = clean_html(video_data['title'])
+
+        formats = [{
+            'url': video['src'],
+            'format_id': '%s-%sp' % (determine_ext(video['src']), video['res']),
+            'height': int_or_none(video.get('res')),
+        } for video in data['files']['videos']]
+        self._sort_formats(formats)
 
         return {
-            'id': videoId,
+            'id': video_id,
             'formats': formats,
-            'uploader': showName,
             'title': title,
-            'thumbnail': self._og_search_thumbnail(webpage),
-            'description': videoDesc,
-            'player_url': playerUrl,
+            'thumbnail': self._og_search_thumbnail(webpage) or data.get('poster'),
+            'description': self._og_search_description(webpage),
+            'duration': float_or_none(video_data.get('duration'), 1000),
+            'uploader': video_data.get('publisher'),
+            'series': video_data.get('show'),
         }

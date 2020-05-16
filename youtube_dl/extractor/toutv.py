@@ -1,71 +1,93 @@
 # coding: utf-8
-import re
+from __future__ import unicode_literals
 
-from .common import InfoExtractor
+import json
+
+from .radiocanada import RadioCanadaIE
+from ..compat import compat_HTTPError
 from ..utils import (
     ExtractorError,
-    unified_strdate,
+    int_or_none,
+    merge_dicts,
 )
 
 
-class TouTvIE(InfoExtractor):
-    IE_NAME = u'tou.tv'
-    _VALID_URL = r'https?://www\.tou\.tv/(?P<id>[a-zA-Z0-9_-]+(?:/(?P<episode>S[0-9]+E[0-9]+)))'
+class TouTvIE(RadioCanadaIE):
+    _NETRC_MACHINE = 'toutv'
+    IE_NAME = 'tou.tv'
+    _VALID_URL = r'https?://ici\.tou\.tv/(?P<id>[a-zA-Z0-9_-]+(?:/S[0-9]+[EC][0-9]+)?)'
 
-    _TEST = {
-        u'url': u'http://www.tou.tv/30-vies/S04E41',
-        u'file': u'30-vies_S04E41.mp4',
-        u'info_dict': {
-            u'title': u'30 vies Saison 4 / Épisode 41',
-            u'description': u'md5:da363002db82ccbe4dafeb9cab039b09',
-            u'age_limit': 8,
-            u'uploader': u'Groupe des Nouveaux Médias',
-            u'duration': 1296,
-            u'upload_date': u'20131118',
-            u'thumbnail': u'http://static.tou.tv/medias/images/2013-11-18_19_00_00_30VIES_0341_01_L.jpeg',
+    _TESTS = [{
+        'url': 'http://ici.tou.tv/garfield-tout-court/S2015E17',
+        'info_dict': {
+            'id': '122017',
+            'ext': 'mp4',
+            'title': 'Saison 2015 Épisode 17',
+            'description': 'La photo de famille 2',
+            'upload_date': '20100717',
         },
-        u'params': {
-            u'skip_download': True,  # Requires rtmpdump
+        'params': {
+            # m3u8 download
+            'skip_download': True,
         },
-        u'skip': 'Only available in Canada'
-    }
+        'skip': '404 Not Found',
+    }, {
+        'url': 'http://ici.tou.tv/hackers',
+        'only_matching': True,
+    }, {
+        'url': 'https://ici.tou.tv/l-age-adulte/S01C501',
+        'only_matching': True,
+    }]
+    _CLIENT_KEY = '90505c8d-9c34-4f34-8da1-3a85bdc6d4f4'
+
+    def _real_initialize(self):
+        email, password = self._get_login_info()
+        if email is None:
+            return
+        try:
+            self._access_token = self._download_json(
+                'https://services.radio-canada.ca/toutv/profiling/accounts/login',
+                None, 'Logging in', data=json.dumps({
+                    'ClientId': self._CLIENT_KEY,
+                    'ClientSecret': '34026772-244b-49b6-8b06-317b30ac9a20',
+                    'Email': email,
+                    'Password': password,
+                    'Scope': 'id.write media-validation.read',
+                }).encode(), headers={
+                    'Authorization': 'client-key ' + self._CLIENT_KEY,
+                    'Content-Type': 'application/json;charset=utf-8',
+                })['access_token']
+        except ExtractorError as e:
+            if isinstance(e.cause, compat_HTTPError) and e.cause.code == 401:
+                error = self._parse_json(e.cause.read().decode(), None)['Message']
+                raise ExtractorError(error, expected=True)
+            raise
+        self._claims = self._call_api('validation/v2/getClaims')['claims']
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('id')
-        webpage = self._download_webpage(url, video_id)
+        path = self._match_id(url)
+        metadata = self._download_json(
+            'https://services.radio-canada.ca/toutv/presentation/%s' % path, path, query={
+                'client_key': self._CLIENT_KEY,
+                'device': 'web',
+                'version': 4,
+            })
+        # IsDrm does not necessarily mean the video is DRM protected (see
+        # https://github.com/ytdl-org/youtube-dl/issues/13994).
+        if metadata.get('IsDrm'):
+            self.report_warning('This video is probably DRM protected.', path)
+        video_id = metadata['IdMedia']
+        details = metadata['Details']
 
-        mediaId = self._search_regex(
-            r'"idMedia":\s*"([^"]+)"', webpage, u'media ID')
-
-        streams_url = u'http://release.theplatform.com/content.select?pid=' + mediaId
-        streams_doc = self._download_xml(
-            streams_url, video_id, note=u'Downloading stream list')
-
-        video_url = next(n.text
-                         for n in streams_doc.findall('.//choice/url')
-                         if u'//ad.doubleclick' not in n.text)
-        if video_url.endswith('/Unavailable.flv'):
-            raise ExtractorError(
-                u'Access to this video is blocked from outside of Canada',
-                expected=True)
-
-        duration_str = self._html_search_meta(
-            'video:duration', webpage, u'duration')
-        duration = int(duration_str) if duration_str else None
-        upload_date_str = self._html_search_meta(
-            'video:release_date', webpage, u'upload date')
-        upload_date = unified_strdate(upload_date_str) if upload_date_str else None
-
-        return {
+        return merge_dicts({
             'id': video_id,
-            'title': self._og_search_title(webpage),
-            'url': video_url,
-            'description': self._og_search_description(webpage),
-            'uploader': self._dc_search_uploader(webpage),
-            'thumbnail': self._og_search_thumbnail(webpage),
-            'age_limit': self._media_rating_search(webpage),
-            'duration': duration,
-            'upload_date': upload_date,
-            'ext': 'mp4',
-        }
+            'title': details.get('OriginalTitle'),
+            'description': details.get('Description'),
+            'thumbnail': details.get('ImageUrl'),
+            'duration': int_or_none(details.get('LengthInSeconds')),
+            'series': metadata.get('ProgramTitle'),
+            'season_number': int_or_none(metadata.get('SeasonNumber')),
+            'season': metadata.get('SeasonTitle'),
+            'episode_number': int_or_none(metadata.get('EpisodeNumber')),
+            'episode': metadata.get('EpisodeTitle'),
+        }, self._extract_info(metadata.get('AppCode', 'toutv'), video_id))

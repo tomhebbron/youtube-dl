@@ -1,78 +1,49 @@
 # coding: utf-8
 
-import re
-import json
+from __future__ import unicode_literals
 
 from .common import InfoExtractor
 
 
-class TudouIE(InfoExtractor):
-    _VALID_URL = r'(?:http://)?(?:www\.)?tudou\.com/(?:listplay|programs|albumplay)/(?:view|(.+?))/(?:([^/]+)|([^/]+))(?:\.html)?'
+class TudouPlaylistIE(InfoExtractor):
+    IE_NAME = 'tudou:playlist'
+    _VALID_URL = r'https?://(?:www\.)?tudou\.com/listplay/(?P<id>[\w-]{11})\.html'
     _TESTS = [{
-        u'url': u'http://www.tudou.com/listplay/zzdE77v6Mmo/2xN2duXMxmw.html',
-        u'file': u'159448201.f4v',
-        u'md5': u'140a49ed444bd22f93330985d8475fcb',
-        u'info_dict': {
-            u"title": u"卡马乔国足开大脚长传冲吊集锦"
-        }
-    },
-    {
-        u'url': u'http://www.tudou.com/albumplay/TenTw_JgiPM/PzsAs5usU9A.html',
-        u'file': u'todo.mp4',
-        u'md5': u'todo.mp4',
-        u'info_dict': {
-            u'title': u'todo.mp4',
+        'url': 'http://www.tudou.com/listplay/zzdE77v6Mmo.html',
+        'info_dict': {
+            'id': 'zzdE77v6Mmo',
         },
-        u'add_ie': [u'Youku'],
-        u'skip': u'Only works from China'
+        'playlist_mincount': 209,
     }]
 
-    def _url_for_id(self, id, quality = None):
-        info_url = "http://v2.tudou.com/f?id="+str(id)
-        if quality:
-            info_url += '&hd' + quality
-        webpage = self._download_webpage(info_url, id, "Opening the info webpage")
-        final_url = self._html_search_regex('>(.+?)</f>',webpage, 'video url')
-        return final_url
+    def _real_extract(self, url):
+        playlist_id = self._match_id(url)
+        playlist_data = self._download_json(
+            'http://www.tudou.com/tvp/plist.action?lcode=%s' % playlist_id, playlist_id)
+        entries = [self.url_result(
+            'http://www.tudou.com/programs/view/%s' % item['icode'],
+            'Tudou', item['icode'],
+            item['kw']) for item in playlist_data['items']]
+        return self.playlist_result(entries, playlist_id)
+
+
+class TudouAlbumIE(InfoExtractor):
+    IE_NAME = 'tudou:album'
+    _VALID_URL = r'https?://(?:www\.)?tudou\.com/album(?:cover|play)/(?P<id>[\w-]{11})'
+    _TESTS = [{
+        'url': 'http://www.tudou.com/albumplay/v5qckFJvNJg.html',
+        'info_dict': {
+            'id': 'v5qckFJvNJg',
+        },
+        'playlist_mincount': 45,
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group(2)
-        webpage = self._download_webpage(url, video_id)
-
-        m = re.search(r'vcode:\s*[\'"](.+?)[\'"]', webpage)
-        if m and m.group(1):
-            return {
-                '_type': 'url',
-                'url': u'youku:' + m.group(1),
-                'ie_key': 'Youku'
-            }
-
-        title = self._search_regex(
-            r",kw:\s*['\"](.+?)[\"']", webpage, u'title')
-        thumbnail_url = self._search_regex(
-            r",pic:\s*[\"'](.+?)[\"']", webpage, u'thumbnail URL', fatal=False)
-
-        segs_json = self._search_regex(r'segs: \'(.*)\'', webpage, 'segments')
-        segments = json.loads(segs_json)
-        # It looks like the keys are the arguments that have to be passed as
-        # the hd field in the request url, we pick the higher
-        quality = sorted(segments.keys())[-1]
-        parts = segments[quality]
-        result = []
-        len_parts = len(parts)
-        if len_parts > 1:
-            self.to_screen(u'%s: found %s parts' % (video_id, len_parts))
-        for part in parts:
-            part_id = part['k']
-            final_url = self._url_for_id(part_id, quality)
-            ext = (final_url.split('?')[0]).split('.')[-1]
-            part_info = {'id': part_id,
-                          'url': final_url,
-                          'ext': ext,
-                          'title': title,
-                          'thumbnail': thumbnail_url,
-                          }
-            result.append(part_info)
-
-        return result
+        album_id = self._match_id(url)
+        album_data = self._download_json(
+            'http://www.tudou.com/tvp/alist.action?acode=%s' % album_id, album_id)
+        entries = [self.url_result(
+            'http://www.tudou.com/programs/view/%s' % item['icode'],
+            'Tudou', item['icode'],
+            item['kw']) for item in album_data['items']]
+        return self.playlist_result(entries, album_id)

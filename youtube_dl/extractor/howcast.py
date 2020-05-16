@@ -1,45 +1,43 @@
-import re
+from __future__ import unicode_literals
 
 from .common import InfoExtractor
+from ..utils import parse_iso8601
 
 
 class HowcastIE(InfoExtractor):
-    _VALID_URL = r'(?:https?://)?(?:www\.)?howcast\.com/videos/(?P<id>\d+)'
+    _VALID_URL = r'https?://(?:www\.)?howcast\.com/videos/(?P<id>\d+)'
     _TEST = {
-        u'url': u'http://www.howcast.com/videos/390161-How-to-Tie-a-Square-Knot-Properly',
-        u'file': u'390161.mp4',
-        u'md5': u'8b743df908c42f60cf6496586c7f12c3',
-        u'info_dict': {
-            u"description": u"The square knot, also known as the reef knot, is one of the oldest, most basic knots to tie, and can be used in many different ways. Here's the proper way to tie a square knot.", 
-            u"title": u"How to Tie a Square Knot Properly"
-        }
+        'url': 'http://www.howcast.com/videos/390161-How-to-Tie-a-Square-Knot-Properly',
+        'md5': '7d45932269a288149483144f01b99789',
+        'info_dict': {
+            'id': '390161',
+            'ext': 'mp4',
+            'title': 'How to Tie a Square Knot Properly',
+            'description': 'md5:dbe792e5f6f1489027027bf2eba188a3',
+            'timestamp': 1276081287,
+            'upload_date': '20100609',
+            'duration': 56.823,
+        },
+        'params': {
+            'skip_download': True,
+        },
+        'add_ie': ['Ooyala'],
     }
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
+        video_id = self._match_id(url)
 
-        video_id = mobj.group('id')
         webpage = self._download_webpage(url, video_id)
 
-        self.report_extraction(video_id)
+        embed_code = self._search_regex(
+            r'<iframe[^>]+src="[^"]+\bembed_code=([^\b]+)\b',
+            webpage, 'ooyala embed code')
 
-        video_url = self._search_regex(r'\'?file\'?: "(http://mobile-media\.howcast\.com/[0-9]+\.mp4)',
-            webpage, u'video URL')
-
-        video_title = self._html_search_regex(r'<meta content=(?:"([^"]+)"|\'([^\']+)\') property=\'og:title\'',
-            webpage, u'title')
-
-        video_description = self._html_search_regex(r'<meta content=(?:"([^"]+)"|\'([^\']+)\') name=\'description\'',
-            webpage, u'description', fatal=False)
-
-        thumbnail = self._html_search_regex(r'<meta content=\'(.+?)\' property=\'og:image\'',
-            webpage, u'thumbnail', fatal=False)
-
-        return [{
-            'id':       video_id,
-            'url':      video_url,
-            'ext':      'mp4',
-            'title':    video_title,
-            'description': video_description,
-            'thumbnail': thumbnail,
-        }]
+        return {
+            '_type': 'url_transparent',
+            'ie_key': 'Ooyala',
+            'url': 'ooyala:%s' % embed_code,
+            'id': video_id,
+            'timestamp': parse_iso8601(self._html_search_meta(
+                'article:published_time', webpage, 'timestamp')),
+        }

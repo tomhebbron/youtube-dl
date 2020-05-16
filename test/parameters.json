@@ -7,8 +7,7 @@
     "forcethumbnail": false, 
     "forcetitle": false, 
     "forceurl": false, 
-    "format": null, 
-    "format_limit": null, 
+    "format": "best",
     "ignoreerrors": false, 
     "listformats": null, 
     "logtostderr": false, 
@@ -27,9 +26,8 @@
     "rejecttitle": null, 
     "retries": 10, 
     "simulate": false, 
-    "skip_download": false, 
     "subtitleslang": null, 
-    "subtitlesformat": "srt",
+    "subtitlesformat": "best",
     "test": true, 
     "updatetime": true, 
     "usenetrc": false, 
@@ -40,5 +38,6 @@
     "writesubtitles": false,
     "allsubtitles": false,
     "listssubtitles": false,
-    "socket_timeout": 20
+    "socket_timeout": 20,
+    "fixup": "never"
 }

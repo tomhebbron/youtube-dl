@@ -1,85 +1,149 @@
+from __future__ import unicode_literals
+
 import re
 
 from .common import InfoExtractor
 from ..utils import (
+    extract_attributes,
     ExtractorError,
-    unescapeHTML,
+    get_element_by_class,
+    js_to_json,
 )
 
 
 class SteamIE(InfoExtractor):
-    _VALID_URL = r"""http://store\.steampowered\.com/
-                (agecheck/)?
-                (?P<urltype>video|app)/ #If the page is only for videos or for a game
-                (?P<gameID>\d+)/?
-                (?P<videoID>\d*)(?P<extra>\??) #For urltype == video we sometimes get the videoID
-                """
+    _VALID_URL = r"""(?x)
+        https?://store\.steampowered\.com/
+            (agecheck/)?
+            (?P<urltype>video|app)/ #If the page is only for videos or for a game
+            (?P<gameID>\d+)/?
+            (?P<videoID>\d*)(?P<extra>\??) # For urltype == video we sometimes get the videoID
+        |
+        https?://(?:www\.)?steamcommunity\.com/sharedfiles/filedetails/\?id=(?P<fileID>[0-9]+)
+    """
     _VIDEO_PAGE_TEMPLATE = 'http://store.steampowered.com/video/%s/'
     _AGECHECK_TEMPLATE = 'http://store.steampowered.com/agecheck/video/%s/?snr=1_agecheck_agecheck__age-gate&ageDay=1&ageMonth=January&ageYear=1970'
-    _TEST = {
-        u"url": u"http://store.steampowered.com/video/105600/",
-        u"playlist": [
+    _TESTS = [{
+        'url': 'http://store.steampowered.com/video/105600/',
+        'playlist': [
             {
-                u"file": u"81300.flv",
-                u"md5": u"f870007cee7065d7c76b88f0a45ecc07",
-                u"info_dict": {
-                        u"title": u"Terraria 1.1 Trailer",
-                        u'playlist_index': 1,
+                'md5': '6a294ee0c4b1f47f5bb76a65e31e3592',
+                'info_dict': {
+                    'id': '2040428',
+                    'ext': 'mp4',
+                    'title': 'Terraria 1.3 Trailer',
+                    'playlist_index': 1,
                 }
             },
             {
-                u"file": u"80859.flv",
-                u"md5": u"61aaf31a5c5c3041afb58fb83cbb5751",
-                u"info_dict": {
-                    u"title": u"Terraria Trailer",
-                    u'playlist_index': 2,
+                'md5': '911672b20064ca3263fa89650ba5a7aa',
+                'info_dict': {
+                    'id': '2029566',
+                    'ext': 'mp4',
+                    'title': 'Terraria 1.2 Trailer',
+                    'playlist_index': 2,
                 }
             }
-        ]
-    }
-
-
-    @classmethod
-    def suitable(cls, url):
-        """Receives a URL and returns True if suitable for this IE."""
-        return re.match(cls._VALID_URL, url, re.VERBOSE) is not None
+        ],
+        'info_dict': {
+            'id': '105600',
+            'title': 'Terraria',
+        },
+        'params': {
+            'playlistend': 2,
+        }
+    }, {
+        'url': 'http://steamcommunity.com/sharedfiles/filedetails/?id=242472205',
+        'info_dict': {
+            'id': 'X8kpJBlzD2E',
+            'ext': 'mp4',
+            'upload_date': '20140617',
+            'title': 'FRONTIERS - Trapping',
+            'description': 'md5:bf6f7f773def614054089e5769c12a6e',
+            'uploader': 'AAD Productions',
+            'uploader_id': 'AtomicAgeDogGames',
+        }
+    }]
 
     def _real_extract(self, url):
-        m = re.match(self._VALID_URL, url, re.VERBOSE)
-        gameID = m.group('gameID')
+        m = re.match(self._VALID_URL, url)
+        fileID = m.group('fileID')
+        if fileID:
+            videourl = url
+            playlist_id = fileID
+        else:
+            gameID = m.group('gameID')
+            playlist_id = gameID
+            videourl = self._VIDEO_PAGE_TEMPLATE % playlist_id
 
-        videourl = self._VIDEO_PAGE_TEMPLATE % gameID
-        webpage = self._download_webpage(videourl, gameID)
+        self._set_cookie('steampowered.com', 'mature_content', '1')
+
+        webpage = self._download_webpage(videourl, playlist_id)
 
         if re.search('<h2>Please enter your birth date to continue:</h2>', webpage) is not None:
-            videourl = self._AGECHECK_TEMPLATE % gameID
+            videourl = self._AGECHECK_TEMPLATE % playlist_id
             self.report_age_confirmation()
-            webpage = self._download_webpage(videourl, gameID)
+            webpage = self._download_webpage(videourl, playlist_id)
 
-        self.report_extraction(gameID)
-        game_title = self._html_search_regex(r'<h2 class="pageheader">(.*?)</h2>',
-                                             webpage, 'game title')
+        flash_vars = self._parse_json(self._search_regex(
+            r'(?s)rgMovieFlashvars\s*=\s*({.+?});', webpage,
+            'flash vars'), playlist_id, js_to_json)
 
-        urlRE = r"'movie_(?P<videoID>\d+)': \{\s*FILENAME: \"(?P<videoURL>[\w:/\.\?=]+)\"(,\s*MOVIE_NAME: \"(?P<videoName>[\w:/\.\?=\+-]+)\")?\s*\},"
-        mweb = re.finditer(urlRE, webpage)
-        namesRE = r'<span class="title">(?P<videoName>.+?)</span>'
-        titles = re.finditer(namesRE, webpage)
-        thumbsRE = r'<img class="movie_thumb" src="(?P<thumbnail>.+?)">'
-        thumbs = re.finditer(thumbsRE, webpage)
-        videos = []
-        for vid,vtitle,thumb in zip(mweb,titles,thumbs):
-            video_id = vid.group('videoID')
-            title = vtitle.group('videoName')
-            video_url = vid.group('videoURL')
-            video_thumb = thumb.group('thumbnail')
-            if not video_url:
-                raise ExtractorError(u'Cannot find video url for %s' % video_id)
-            info = {
-                'id':video_id,
-                'url':video_url,
-                'ext': 'flv',
-                'title': unescapeHTML(title),
-                'thumbnail': video_thumb
-                  }
-            videos.append(info)
-        return [self.playlist_result(videos, gameID, game_title)]
+        playlist_title = None
+        entries = []
+        if fileID:
+            playlist_title = get_element_by_class('workshopItemTitle', webpage)
+            for movie in flash_vars.values():
+                if not movie:
+                    continue
+                youtube_id = movie.get('YOUTUBE_VIDEO_ID')
+                if not youtube_id:
+                    continue
+                entries.append({
+                    '_type': 'url',
+                    'url': youtube_id,
+                    'ie_key': 'Youtube',
+                })
+        else:
+            playlist_title = get_element_by_class('apphub_AppName', webpage)
+            for movie_id, movie in flash_vars.items():
+                if not movie:
+                    continue
+                video_id = self._search_regex(r'movie_(\d+)', movie_id, 'video id', fatal=False)
+                title = movie.get('MOVIE_NAME')
+                if not title or not video_id:
+                    continue
+                entry = {
+                    'id': video_id,
+                    'title': title.replace('+', ' '),
+                }
+                formats = []
+                flv_url = movie.get('FILENAME')
+                if flv_url:
+                    formats.append({
+                        'format_id': 'flv',
+                        'url': flv_url,
+                    })
+                highlight_element = self._search_regex(
+                    r'(<div[^>]+id="highlight_movie_%s"[^>]+>)' % video_id,
+                    webpage, 'highlight element', fatal=False)
+                if highlight_element:
+                    highlight_attribs = extract_attributes(highlight_element)
+                    if highlight_attribs:
+                        entry['thumbnail'] = highlight_attribs.get('data-poster')
+                        for quality in ('', '-hd'):
+                            for ext in ('webm', 'mp4'):
+                                video_url = highlight_attribs.get('data-%s%s-source' % (ext, quality))
+                                if video_url:
+                                    formats.append({
+                                        'format_id': ext + quality,
+                                        'url': video_url,
+                                    })
+                if not formats:
+                    continue
+                entry['formats'] = formats
+                entries.append(entry)
+        if not entries:
+            raise ExtractorError('Could not find any videos')
+
+        return self.playlist_result(entries, playlist_id, playlist_title)

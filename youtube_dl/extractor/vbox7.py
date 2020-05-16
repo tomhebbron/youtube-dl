@@ -1,54 +1,105 @@
+# coding: utf-8
+from __future__ import unicode_literals
+
 import re
 
 from .common import InfoExtractor
-from ..utils import (
-    compat_urllib_parse,
-    compat_urllib_request,
-
-    ExtractorError,
-)
+from ..utils import ExtractorError
 
 
 class Vbox7IE(InfoExtractor):
-    """Information Extractor for Vbox7"""
-    _VALID_URL = r'(?:http://)?(?:www\.)?vbox7\.com/play:([^/]+)'
-    _TEST = {
-        u'url': u'http://vbox7.com/play:249bb972c2',
-        u'file': u'249bb972c2.flv',
-        u'md5': u'99f65c0c9ef9b682b97313e052734c3f',
-        u'info_dict': {
-            u"title": u"\u0421\u043c\u044f\u0445! \u0427\u0443\u0434\u043e - \u0447\u0438\u0441\u0442 \u0437\u0430 \u0441\u0435\u043a\u0443\u043d\u0434\u0438 - \u0421\u043a\u0440\u0438\u0442\u0430 \u043a\u0430\u043c\u0435\u0440\u0430"
-        }
-    }
+    _VALID_URL = r'''(?x)
+                    https?://
+                        (?:[^/]+\.)?vbox7\.com/
+                        (?:
+                            play:|
+                            (?:
+                                emb/external\.php|
+                                player/ext\.swf
+                            )\?.*?\bvid=
+                        )
+                        (?P<id>[\da-fA-F]+)
+                    '''
+    _GEO_COUNTRIES = ['BG']
+    _TESTS = [{
+        'url': 'http://vbox7.com/play:0946fff23c',
+        'md5': 'a60f9ab3a3a2f013ef9a967d5f7be5bf',
+        'info_dict': {
+            'id': '0946fff23c',
+            'ext': 'mp4',
+            'title': 'Борисов: Притеснен съм за бъдещето на България',
+            'description': 'По думите му е опасно страната ни да бъде обявена за "сигурна"',
+            'thumbnail': r're:^https?://.*\.jpg$',
+            'timestamp': 1470982814,
+            'upload_date': '20160812',
+            'uploader': 'zdraveibulgaria',
+        },
+        'params': {
+            'proxy': '127.0.0.1:8118',
+        },
+    }, {
+        'url': 'http://vbox7.com/play:249bb972c2',
+        'md5': '99f65c0c9ef9b682b97313e052734c3f',
+        'info_dict': {
+            'id': '249bb972c2',
+            'ext': 'mp4',
+            'title': 'Смях! Чудо - чист за секунди - Скрита камера',
+        },
+        'skip': 'georestricted',
+    }, {
+        'url': 'http://vbox7.com/emb/external.php?vid=a240d20f9c&autoplay=1',
+        'only_matching': True,
+    }, {
+        'url': 'http://i49.vbox7.com/player/ext.swf?vid=0946fff23c&autoplay=1',
+        'only_matching': True,
+    }]
 
-    def _real_extract(self,url):
-        mobj = re.match(self._VALID_URL, url)
-        if mobj is None:
-            raise ExtractorError(u'Invalid URL: %s' % url)
-        video_id = mobj.group(1)
+    @staticmethod
+    def _extract_url(webpage):
+        mobj = re.search(
+            r'<iframe[^>]+src=(?P<q>["\'])(?P<url>(?:https?:)?//vbox7\.com/emb/external\.php.+?)(?P=q)',
+            webpage)
+        if mobj:
+            return mobj.group('url')
 
-        redirect_page, urlh = self._download_webpage_handle(url, video_id)
-        new_location = self._search_regex(r'window\.location = \'(.*)\';', redirect_page, u'redirect location')
-        redirect_url = urlh.geturl() + new_location
-        webpage = self._download_webpage(redirect_url, video_id, u'Downloading redirect page')
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
 
-        title = self._html_search_regex(r'<title>(.*)</title>',
-            webpage, u'title').split('/')[0].strip()
+        response = self._download_json(
+            'https://www.vbox7.com/ajax/video/nextvideo.php?vid=%s' % video_id,
+            video_id)
 
-        ext = "flv"
-        info_url = "http://vbox7.com/play/magare.do"
-        data = compat_urllib_parse.urlencode({'as3':'1','vid':video_id})
-        info_request = compat_urllib_request.Request(info_url, data)
-        info_request.add_header('Content-Type', 'application/x-www-form-urlencoded')
-        info_response = self._download_webpage(info_request, video_id, u'Downloading info webpage')
-        if info_response is None:
-            raise ExtractorError(u'Unable to extract the media url')
-        (final_url, thumbnail_url) = map(lambda x: x.split('=')[1], info_response.split('&'))
+        if 'error' in response:
+            raise ExtractorError(
+                '%s said: %s' % (self.IE_NAME, response['error']), expected=True)
 
-        return [{
-            'id':        video_id,
-            'url':       final_url,
-            'ext':       ext,
-            'title':     title,
-            'thumbnail': thumbnail_url,
-        }]
+        video = response['options']
+
+        title = video['title']
+        video_url = video['src']
+
+        if '/na.mp4' in video_url:
+            self.raise_geo_restricted(countries=self._GEO_COUNTRIES)
+
+        uploader = video.get('uploader')
+
+        webpage = self._download_webpage(
+            'http://vbox7.com/play:%s' % video_id, video_id, fatal=None)
+
+        info = {}
+
+        if webpage:
+            info = self._search_json_ld(
+                webpage.replace('"/*@context"', '"@context"'), video_id,
+                fatal=False)
+
+        info.update({
+            'id': video_id,
+            'title': title,
+            'url': video_url,
+            'uploader': uploader,
+            'thumbnail': self._proto_relative_url(
+                info.get('thumbnail') or self._og_search_thumbnail(webpage),
+                'http:'),
+        })
+        return info

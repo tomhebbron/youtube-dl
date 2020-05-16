@@ -1,38 +1,56 @@
 # coding: utf-8
 from __future__ import unicode_literals
 
-import re
-
 from .common import InfoExtractor
+from ..utils import month_by_name
 
 
 class FranceInterIE(InfoExtractor):
-    _VALID_URL = r'http://(?:www\.)?franceinter\.fr/player/reecouter\?play=(?P<id>[0-9]{6})'
+    _VALID_URL = r'https?://(?:www\.)?franceinter\.fr/emissions/(?P<id>[^?#]+)'
+
     _TEST = {
-        'url': 'http://www.franceinter.fr/player/reecouter?play=793962',
-        'file': '793962.mp3',
-        'md5': '4764932e466e6f6c79c317d2e74f6884',
-        "info_dict": {
-            "title": "L’Histoire dans les jeux vidéo",
+        'url': 'https://www.franceinter.fr/emissions/affaires-sensibles/affaires-sensibles-07-septembre-2016',
+        'md5': '9e54d7bdb6fdc02a841007f8a975c094',
+        'info_dict': {
+            'id': 'affaires-sensibles/affaires-sensibles-07-septembre-2016',
+            'ext': 'mp3',
+            'title': 'Affaire Cahuzac : le contentieux du compte en Suisse',
+            'description': 'md5:401969c5d318c061f86bda1fa359292b',
+            'upload_date': '20160907',
         },
     }
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('id')
+        video_id = self._match_id(url)
 
         webpage = self._download_webpage(url, video_id)
-        title = self._html_search_regex(
-            r'<span class="roll_overflow">(.*?)</span></h1>', webpage, 'title')
-        path = self._search_regex(
-            r'&urlAOD=(.*?)&startTime', webpage, 'video url')
-        video_url = 'http://www.franceinter.fr/' + path
+
+        video_url = self._search_regex(
+            r'(?s)<div[^>]+class=["\']page-diffusion["\'][^>]*>.*?<button[^>]+data-url=(["\'])(?P<url>(?:(?!\1).)+)\1',
+            webpage, 'video url', group='url')
+
+        title = self._og_search_title(webpage)
+        description = self._og_search_description(webpage)
+
+        upload_date_str = self._search_regex(
+            r'class=["\']\s*cover-emission-period\s*["\'][^>]*>[^<]+\s+(\d{1,2}\s+[^\s]+\s+\d{4})<',
+            webpage, 'upload date', fatal=False)
+        if upload_date_str:
+            upload_date_list = upload_date_str.split()
+            upload_date_list.reverse()
+            upload_date_list[1] = '%02d' % (month_by_name(upload_date_list[1], lang='fr') or 0)
+            upload_date_list[2] = '%02d' % int(upload_date_list[2])
+            upload_date = ''.join(upload_date_list)
+        else:
+            upload_date = None
 
         return {
             'id': video_id,
+            'title': title,
+            'description': description,
+            'upload_date': upload_date,
             'formats': [{
                 'url': video_url,
                 'vcodec': 'none',
             }],
-            'title': title,
         }

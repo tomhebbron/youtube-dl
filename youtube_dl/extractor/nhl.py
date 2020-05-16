@@ -1,118 +1,128 @@
+from __future__ import unicode_literals
+
 import re
-import json
 
 from .common import InfoExtractor
+from ..compat import compat_str
 from ..utils import (
-    compat_urlparse,
-    compat_urllib_parse,
     determine_ext,
-    unified_strdate,
+    int_or_none,
+    parse_iso8601,
+    parse_duration,
 )
 
 
-class NHLBaseInfoExtractor(InfoExtractor):
-    @staticmethod
-    def _fix_json(json_string):
-        return json_string.replace('\\\'', '\'')
+class NHLBaseIE(InfoExtractor):
+    def _real_extract(self, url):
+        site, tmp_id = re.match(self._VALID_URL, url).groups()
+        video_data = self._download_json(
+            'https://%s/%s/%sid/v1/%s/details/web-v1.json'
+            % (self._CONTENT_DOMAIN, site[:3], 'item/' if site == 'mlb' else '', tmp_id), tmp_id)
+        if video_data.get('type') != 'video':
+            video_data = video_data['media']
+            video = video_data.get('video')
+            if video:
+                video_data = video
+            else:
+                videos = video_data.get('videos')
+                if videos:
+                    video_data = videos[0]
 
-    def _extract_video(self, info):
-        video_id = info['id']
-        self.report_extraction(video_id)
+        video_id = compat_str(video_data['id'])
+        title = video_data['title']
 
-        initial_video_url = info['publishPoint']
-        data = compat_urllib_parse.urlencode({
-            'type': 'fvod',
-            'path': initial_video_url.replace('.mp4', '_sd.mp4'),
-        })
-        path_url = 'http://video.nhl.com/videocenter/servlets/encryptvideopath?' + data
-        path_doc = self._download_xml(path_url, video_id,
-            u'Downloading final video url')
-        video_url = path_doc.find('path').text
+        formats = []
+        for playback in video_data.get('playbacks', []):
+            playback_url = playback.get('url')
+            if not playback_url:
+                continue
+            ext = determine_ext(playback_url)
+            if ext == 'm3u8':
+                m3u8_formats = self._extract_m3u8_formats(
+                    playback_url, video_id, 'mp4', 'm3u8_native',
+                    m3u8_id=playback.get('name', 'hls'), fatal=False)
+                self._check_formats(m3u8_formats, video_id)
+                formats.extend(m3u8_formats)
+            else:
+                height = int_or_none(playback.get('height'))
+                formats.append({
+                    'format_id': playback.get('name', 'http' + ('-%dp' % height if height else '')),
+                    'url': playback_url,
+                    'width': int_or_none(playback.get('width')),
+                    'height': height,
+                    'tbr': int_or_none(self._search_regex(r'_(\d+)[kK]', playback_url, 'bitrate', default=None)),
+                })
+        self._sort_formats(formats)
 
-        join = compat_urlparse.urljoin
+        thumbnails = []
+        cuts = video_data.get('image', {}).get('cuts') or []
+        if isinstance(cuts, dict):
+            cuts = cuts.values()
+        for thumbnail_data in cuts:
+            thumbnail_url = thumbnail_data.get('src')
+            if not thumbnail_url:
+                continue
+            thumbnails.append({
+                'url': thumbnail_url,
+                'width': int_or_none(thumbnail_data.get('width')),
+                'height': int_or_none(thumbnail_data.get('height')),
+            })
+
         return {
             'id': video_id,
-            'title': info['name'],
-            'url': video_url,
-            'ext': determine_ext(video_url),
-            'description': info['description'],
-            'duration': int(info['duration']),
-            'thumbnail': join(join(video_url, '/u/'), info['bigImage']),
-            'upload_date': unified_strdate(info['releaseDate'].split('.')[0]),
+            'title': title,
+            'description': video_data.get('description'),
+            'timestamp': parse_iso8601(video_data.get('date')),
+            'duration': parse_duration(video_data.get('duration')),
+            'thumbnails': thumbnails,
+            'formats': formats,
         }
 
 
-class NHLIE(NHLBaseInfoExtractor):
-    IE_NAME = u'nhl.com'
-    _VALID_URL = r'https?://video(?P<team>\.[^.]*)?\.nhl\.com/videocenter/console\?.*?(?<=[?&])id=(?P<id>\d+)'
-
-    _TEST = {
-        u'url': u'http://video.canucks.nhl.com/videocenter/console?catid=6?id=453614',
-        u'file': u'453614.mp4',
-        u'info_dict': {
-            u'title': u'Quick clip: Weise 4-3 goal vs Flames',
-            u'description': u'Dale Weise scores his first of the season to put the Canucks up 4-3.',
-            u'duration': 18,
-            u'upload_date': u'20131006',
+class NHLIE(NHLBaseIE):
+    IE_NAME = 'nhl.com'
+    _VALID_URL = r'https?://(?:www\.)?(?P<site>nhl|wch2016)\.com/(?:[^/]+/)*c-(?P<id>\d+)'
+    _CONTENT_DOMAIN = 'nhl.bamcontent.com'
+    _TESTS = [{
+        # type=video
+        'url': 'https://www.nhl.com/video/anisimov-cleans-up-mess/t-277752844/c-43663503',
+        'md5': '0f7b9a8f986fb4b4eeeece9a56416eaf',
+        'info_dict': {
+            'id': '43663503',
+            'ext': 'mp4',
+            'title': 'Anisimov cleans up mess',
+            'description': 'md5:a02354acdfe900e940ce40706939ca63',
+            'timestamp': 1461288600,
+            'upload_date': '20160422',
         },
-    }
-
-    def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('id')
-        json_url = 'http://video.nhl.com/videocenter/servlets/playlist?ids=%s&format=json' % video_id
-        info_json = self._download_webpage(json_url, video_id,
-            u'Downloading info json')
-        info_json = self._fix_json(info_json)
-        info = json.loads(info_json)[0]
-        return self._extract_video(info)
-
-
-class NHLVideocenterIE(NHLBaseInfoExtractor):
-    IE_NAME = u'nhl.com:videocenter'
-    IE_DESC = u'NHL videocenter category'
-    _VALID_URL = r'https?://video\.(?P<team>[^.]*)\.nhl\.com/videocenter/(console\?.*?catid=(?P<catid>[^&]+))?'
-
-    @classmethod
-    def suitable(cls, url):
-        if NHLIE.suitable(url):
-            return False
-        return super(NHLVideocenterIE, cls).suitable(url)
-
-    def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        team = mobj.group('team')
-        webpage = self._download_webpage(url, team)
-        cat_id = self._search_regex(
-            [r'var defaultCatId = "(.+?)";',
-             r'{statusIndex:0,index:0,.*?id:(.*?),'],
-            webpage, u'category id')
-        playlist_title = self._html_search_regex(
-            r'tab0"[^>]*?>(.*?)</td>',
-            webpage, u'playlist title', flags=re.DOTALL).lower().capitalize()
-
-        data = compat_urllib_parse.urlencode({
-            'cid': cat_id,
-            # This is the default value
-            'count': 12,
-            'ptrs': 3,
-            'format': 'json',
-        })
-        path = '/videocenter/servlets/browse?' + data
-        request_url = compat_urlparse.urljoin(url, path)
-        response = self._download_webpage(request_url, playlist_title)
-        response = self._fix_json(response)
-        if not response.strip():
-            self._downloader.report_warning(u'Got an empty reponse, trying '
-                                            u'adding the "newvideos" parameter')
-            response = self._download_webpage(request_url + '&newvideos=true',
-                playlist_title)
-            response = self._fix_json(response)
-        videos = json.loads(response)
-
-        return {
-            '_type': 'playlist',
-            'title': playlist_title,
-            'id': cat_id,
-            'entries': [self._extract_video(i) for i in videos],
-        }
+    }, {
+        # type=article
+        'url': 'https://www.nhl.com/news/dennis-wideman-suspended/c-278258934',
+        'md5': '1f39f4ea74c1394dea110699a25b366c',
+        'info_dict': {
+            'id': '40784403',
+            'ext': 'mp4',
+            'title': 'Wideman suspended by NHL',
+            'description': 'Flames defenseman Dennis Wideman was banned 20 games for violation of Rule 40 (Physical Abuse of Officials)',
+            'upload_date': '20160204',
+            'timestamp': 1454544904,
+        },
+    }, {
+        # Some m3u8 URLs are invalid (https://github.com/ytdl-org/youtube-dl/issues/10713)
+        'url': 'https://www.nhl.com/predators/video/poile-laviolette-on-subban-trade/t-277437416/c-44315003',
+        'md5': '50b2bb47f405121484dda3ccbea25459',
+        'info_dict': {
+            'id': '44315003',
+            'ext': 'mp4',
+            'title': 'Poile, Laviolette on Subban trade',
+            'description': 'General manager David Poile and head coach Peter Laviolette share their thoughts on acquiring P.K. Subban from Montreal (06/29/16)',
+            'timestamp': 1467242866,
+            'upload_date': '20160629',
+        },
+    }, {
+        'url': 'https://www.wch2016.com/video/caneur-best-of-game-2-micd-up/t-281230378/c-44983703',
+        'only_matching': True,
+    }, {
+        'url': 'https://www.wch2016.com/news/3-stars-team-europe-vs-team-canada/c-282195068',
+        'only_matching': True,
+    }]

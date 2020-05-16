@@ -1,49 +1,79 @@
-import os
+from __future__ import unicode_literals
+
 import re
 
 from .common import InfoExtractor
 from ..utils import (
-    compat_urllib_parse_urlparse,
-    compat_urllib_request,
-    compat_urllib_parse,
+    int_or_none,
+    str_to_int,
+    unified_strdate,
 )
+from .keezmovies import KeezMoviesIE
 
-class MofosexIE(InfoExtractor):
-    _VALID_URL = r'^(?:https?://)?(?:www\.)?(?P<url>mofosex\.com/videos/(?P<videoid>[0-9]+)/.*?\.html)'
-    _TEST = {
-        u'url': u'http://www.mofosex.com/videos/5018/japanese-teen-music-video.html',
-        u'file': u'5018.mp4',
-        u'md5': u'1b2eb47ac33cc75d4a80e3026b613c5a',
-        u'info_dict': {
-            u"title": u"Japanese Teen Music Video",
-            u"age_limit": 18,
+
+class MofosexIE(KeezMoviesIE):
+    _VALID_URL = r'https?://(?:www\.)?mofosex\.com/videos/(?P<id>\d+)/(?P<display_id>[^/?#&.]+)\.html'
+    _TESTS = [{
+        'url': 'http://www.mofosex.com/videos/318131/amateur-teen-playing-and-masturbating-318131.html',
+        'md5': '558fcdafbb63a87c019218d6e49daf8a',
+        'info_dict': {
+            'id': '318131',
+            'display_id': 'amateur-teen-playing-and-masturbating-318131',
+            'ext': 'mp4',
+            'title': 'amateur teen playing and masturbating',
+            'thumbnail': r're:^https?://.*\.jpg$',
+            'upload_date': '20121114',
+            'view_count': int,
+            'like_count': int,
+            'dislike_count': int,
+            'age_limit': 18,
         }
-    }
+    }, {
+        # This video is no longer available
+        'url': 'http://www.mofosex.com/videos/5018/japanese-teen-music-video.html',
+        'only_matching': True,
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('videoid')
-        url = 'http://www.' + mobj.group('url')
+        webpage, info = self._extract_info(url)
 
-        req = compat_urllib_request.Request(url)
-        req.add_header('Cookie', 'age_verified=1')
-        webpage = self._download_webpage(req, video_id)
+        view_count = str_to_int(self._search_regex(
+            r'VIEWS:</span>\s*([\d,.]+)', webpage, 'view count', fatal=False))
+        like_count = int_or_none(self._search_regex(
+            r'id=["\']amountLikes["\'][^>]*>(\d+)', webpage,
+            'like count', fatal=False))
+        dislike_count = int_or_none(self._search_regex(
+            r'id=["\']amountDislikes["\'][^>]*>(\d+)', webpage,
+            'like count', fatal=False))
+        upload_date = unified_strdate(self._html_search_regex(
+            r'Added:</span>([^<]+)', webpage, 'upload date', fatal=False))
 
-        video_title = self._html_search_regex(r'<h1>(.+?)<', webpage, u'title')
-        video_url = compat_urllib_parse.unquote(self._html_search_regex(r'flashvars.video_url = \'([^\']+)', webpage, u'video_url'))
-        path = compat_urllib_parse_urlparse(video_url).path
-        extension = os.path.splitext(path)[1][1:]
-        format = path.split('/')[5].split('_')[:2]
-        format = "-".join(format)
+        info.update({
+            'view_count': view_count,
+            'like_count': like_count,
+            'dislike_count': dislike_count,
+            'upload_date': upload_date,
+            'thumbnail': self._og_search_thumbnail(webpage),
+        })
 
-        age_limit = self._rta_search(webpage)
+        return info
 
-        return {
-            'id': video_id,
-            'title': video_title,
-            'url': video_url,
-            'ext': extension,
-            'format': format,
-            'format_id': format,
-            'age_limit': age_limit,
-        }
+
+class MofosexEmbedIE(InfoExtractor):
+    _VALID_URL = r'https?://(?:www\.)?mofosex\.com/embed/?\?.*?\bvideoid=(?P<id>\d+)'
+    _TESTS = [{
+        'url': 'https://www.mofosex.com/embed/?videoid=318131&referrer=KM',
+        'only_matching': True,
+    }]
+
+    @staticmethod
+    def _extract_urls(webpage):
+        return re.findall(
+            r'<iframe[^>]+\bsrc=["\']((?:https?:)?//(?:www\.)?mofosex\.com/embed/?\?.*?\bvideoid=\d+)',
+            webpage)
+
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
+        return self.url_result(
+            'http://www.mofosex.com/videos/{0}/{0}.html'.format(video_id),
+            ie=MofosexIE.ie_key(), video_id=video_id)

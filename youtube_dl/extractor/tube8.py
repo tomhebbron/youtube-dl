@@ -1,63 +1,86 @@
-import os
+from __future__ import unicode_literals
+
 import re
 
-from .common import InfoExtractor
 from ..utils import (
-    compat_urllib_parse_urlparse,
-    compat_urllib_request,
+    int_or_none,
+    str_to_int,
 )
-from ..aes import (
-    aes_decrypt_text
-)
+from .keezmovies import KeezMoviesIE
 
-class Tube8IE(InfoExtractor):
-    _VALID_URL = r'^(?:https?://)?(?:www\.)?(?P<url>tube8\.com/[^/]+/[^/]+/(?P<videoid>[0-9]+)/?)'
-    _TEST = {
-        u'url': u'http://www.tube8.com/teen/kasia-music-video/229795/',
-        u'file': u'229795.mp4',
-        u'md5': u'e9e0b0c86734e5e3766e653509475db0',
-        u'info_dict': {
-            u"description": u"hot teen Kasia grinding", 
-            u"uploader": u"unknown", 
-            u"title": u"Kasia music video",
-            u"age_limit": 18,
-        }
-    }
+
+class Tube8IE(KeezMoviesIE):
+    _VALID_URL = r'https?://(?:www\.)?tube8\.com/(?:[^/]+/)+(?P<display_id>[^/]+)/(?P<id>\d+)'
+    _TESTS = [{
+        'url': 'http://www.tube8.com/teen/kasia-music-video/229795/',
+        'md5': '65e20c48e6abff62ed0c3965fff13a39',
+        'info_dict': {
+            'id': '229795',
+            'display_id': 'kasia-music-video',
+            'ext': 'mp4',
+            'description': 'hot teen Kasia grinding',
+            'uploader': 'unknown',
+            'title': 'Kasia music video',
+            'age_limit': 18,
+            'duration': 230,
+            'categories': ['Teen'],
+            'tags': ['dancing'],
+        },
+    }, {
+        'url': 'http://www.tube8.com/shemale/teen/blonde-cd-gets-kidnapped-by-two-blacks-and-punished-for-being-a-slutty-girl/19569151/',
+        'only_matching': True,
+    }]
+
+    @staticmethod
+    def _extract_urls(webpage):
+        return re.findall(
+            r'<iframe[^>]+\bsrc=["\']((?:https?:)?//(?:www\.)?tube8\.com/embed/(?:[^/]+/)+\d+)',
+            webpage)
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('videoid')
-        url = 'http://www.' + mobj.group('url')
+        webpage, info = self._extract_info(url)
 
-        req = compat_urllib_request.Request(url)
-        req.add_header('Cookie', 'age_verified=1')
-        webpage = self._download_webpage(req, video_id)
+        if not info['title']:
+            info['title'] = self._html_search_regex(
+                r'videoTitle\s*=\s*"([^"]+)', webpage, 'title')
 
-        video_title = self._html_search_regex(r'videotitle	="([^"]+)', webpage, u'title')
-        video_description = self._html_search_regex(r'>Description:</strong>(.+?)<', webpage, u'description', fatal=False)
-        video_uploader = self._html_search_regex(r'>Submitted by:</strong>(?:\s|<[^>]*>)*(.+?)<', webpage, u'uploader', fatal=False)
-        thumbnail = self._html_search_regex(r'"image_url":"([^"]+)', webpage, u'thumbnail', fatal=False)
-        if thumbnail:
-            thumbnail = thumbnail.replace('\\/', '/')
+        description = self._html_search_regex(
+            r'(?s)Description:</dt>\s*<dd>(.+?)</dd>', webpage, 'description', fatal=False)
+        uploader = self._html_search_regex(
+            r'<span class="username">\s*(.+?)\s*<',
+            webpage, 'uploader', fatal=False)
 
-        video_url = self._html_search_regex(r'"video_url":"([^"]+)', webpage, u'video_url')
-        if webpage.find('"encrypted":true')!=-1:
-            password = self._html_search_regex(r'"video_title":"([^"]+)', webpage, u'password')
-            video_url = aes_decrypt_text(video_url, password, 32).decode('utf-8')
-        path = compat_urllib_parse_urlparse(video_url).path
-        extension = os.path.splitext(path)[1][1:]
-        format = path.split('/')[4].split('_')[:2]
-        format = "-".join(format)
+        like_count = int_or_none(self._search_regex(
+            r'rupVar\s*=\s*"(\d+)"', webpage, 'like count', fatal=False))
+        dislike_count = int_or_none(self._search_regex(
+            r'rdownVar\s*=\s*"(\d+)"', webpage, 'dislike count', fatal=False))
+        view_count = str_to_int(self._search_regex(
+            r'Views:\s*</dt>\s*<dd>([\d,\.]+)',
+            webpage, 'view count', fatal=False))
+        comment_count = str_to_int(self._search_regex(
+            r'<span id="allCommentsCount">(\d+)</span>',
+            webpage, 'comment count', fatal=False))
 
-        return {
-            'id': video_id,
-            'uploader': video_uploader,
-            'title': video_title,
-            'thumbnail': thumbnail,
-            'description': video_description,
-            'url': video_url,
-            'ext': extension,
-            'format': format,
-            'format_id': format,
-            'age_limit': 18,
-        }
+        category = self._search_regex(
+            r'Category:\s*</dt>\s*<dd>\s*<a[^>]+href=[^>]+>([^<]+)',
+            webpage, 'category', fatal=False)
+        categories = [category] if category else None
+
+        tags_str = self._search_regex(
+            r'(?s)Tags:\s*</dt>\s*<dd>(.+?)</(?!a)',
+            webpage, 'tags', fatal=False)
+        tags = [t for t in re.findall(
+            r'<a[^>]+href=[^>]+>([^<]+)', tags_str)] if tags_str else None
+
+        info.update({
+            'description': description,
+            'uploader': uploader,
+            'view_count': view_count,
+            'like_count': like_count,
+            'dislike_count': dislike_count,
+            'comment_count': comment_count,
+            'categories': categories,
+            'tags': tags,
+        })
+
+        return info

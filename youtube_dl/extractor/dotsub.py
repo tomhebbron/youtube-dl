@@ -1,41 +1,83 @@
-import re
-import json
-import time
+from __future__ import unicode_literals
 
 from .common import InfoExtractor
+from ..utils import (
+    float_or_none,
+    int_or_none,
+)
 
 
 class DotsubIE(InfoExtractor):
-    _VALID_URL = r'(?:http://)?(?:www\.)?dotsub\.com/view/([^/]+)'
-    _TEST = {
-        u'url': u'http://dotsub.com/view/aed3b8b2-1889-4df5-ae63-ad85f5572f27',
-        u'file': u'aed3b8b2-1889-4df5-ae63-ad85f5572f27.flv',
-        u'md5': u'0914d4d69605090f623b7ac329fea66e',
-        u'info_dict': {
-            u"title": u"Pyramids of Waste (2010), AKA The Lightbulb Conspiracy - Planned obsolescence documentary",
-            u"uploader": u"4v4l0n42",
-            u'description': u'Pyramids of Waste (2010) also known as "The lightbulb conspiracy" is a documentary about how our economic system based on consumerism  and planned obsolescence is breaking our planet down.\r\n\r\nSolutions to this can be found at:\r\nhttp://robotswillstealyourjob.com\r\nhttp://www.federicopistono.org\r\n\r\nhttp://opensourceecology.org\r\nhttp://thezeitgeistmovement.com',
-            u'thumbnail': u'http://dotsub.com/media/aed3b8b2-1889-4df5-ae63-ad85f5572f27/p',
-            u'upload_date': u'20101213',
+    _VALID_URL = r'https?://(?:www\.)?dotsub\.com/view/(?P<id>[^/]+)'
+    _TESTS = [{
+        'url': 'https://dotsub.com/view/9c63db2a-fa95-4838-8e6e-13deafe47f09',
+        'md5': '21c7ff600f545358134fea762a6d42b6',
+        'info_dict': {
+            'id': '9c63db2a-fa95-4838-8e6e-13deafe47f09',
+            'ext': 'flv',
+            'title': 'MOTIVATION - "It\'s Possible" Best Inspirational Video Ever',
+            'description': 'md5:41af1e273edbbdfe4e216a78b9d34ac6',
+            'thumbnail': 're:^https?://dotsub.com/media/9c63db2a-fa95-4838-8e6e-13deafe47f09/p',
+            'duration': 198,
+            'uploader': 'liuxt',
+            'timestamp': 1385778501.104,
+            'upload_date': '20131130',
+            'view_count': int,
         }
-    }
+    }, {
+        'url': 'https://dotsub.com/view/747bcf58-bd59-45b7-8c8c-ac312d084ee6',
+        'md5': '2bb4a83896434d5c26be868c609429a3',
+        'info_dict': {
+            'id': '168006778',
+            'ext': 'mp4',
+            'title': 'Apartments and flats in Raipur the white symphony',
+            'description': 'md5:784d0639e6b7d1bc29530878508e38fe',
+            'thumbnail': 're:^https?://dotsub.com/media/747bcf58-bd59-45b7-8c8c-ac312d084ee6/p',
+            'duration': 290,
+            'timestamp': 1476767794.2809999,
+            'upload_date': '20161018',
+            'uploader': 'parthivi001',
+            'uploader_id': 'user52596202',
+            'view_count': int,
+        },
+        'add_ie': ['Vimeo'],
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group(1)
-        info_url = "https://dotsub.com/api/media/%s/metadata" %(video_id)
-        webpage = self._download_webpage(info_url, video_id)
-        info = json.loads(webpage)
-        date = time.gmtime(info['dateCreated']/1000) # The timestamp is in miliseconds
+        video_id = self._match_id(url)
 
-        return [{
-            'id':          video_id,
-            'url':         info['mediaURI'],
-            'ext':         'flv',
-            'title':       info['title'],
-            'thumbnail':   info['screenshotURI'],
-            'description': info['description'],
-            'uploader':    info['user'],
-            'view_count':  info['numberOfViews'],
-            'upload_date': u'%04i%02i%02i' % (date.tm_year, date.tm_mon, date.tm_mday),
-        }]
+        info = self._download_json(
+            'https://dotsub.com/api/media/%s/metadata' % video_id, video_id)
+        video_url = info.get('mediaURI')
+
+        if not video_url:
+            webpage = self._download_webpage(url, video_id)
+            video_url = self._search_regex(
+                [r'<source[^>]+src="([^"]+)"', r'"file"\s*:\s*\'([^\']+)'],
+                webpage, 'video url', default=None)
+            info_dict = {
+                'id': video_id,
+                'url': video_url,
+                'ext': 'flv',
+            }
+
+        if not video_url:
+            setup_data = self._parse_json(self._html_search_regex(
+                r'(?s)data-setup=([\'"])(?P<content>(?!\1).+?)\1',
+                webpage, 'setup data', group='content'), video_id)
+            info_dict = {
+                '_type': 'url_transparent',
+                'url': setup_data['src'],
+            }
+
+        info_dict.update({
+            'title': info['title'],
+            'description': info.get('description'),
+            'thumbnail': info.get('screenshotURI'),
+            'duration': int_or_none(info.get('duration'), 1000),
+            'uploader': info.get('user'),
+            'timestamp': float_or_none(info.get('dateCreated'), 1000),
+            'view_count': int_or_none(info.get('numberOfViews')),
+        })
+
+        return info_dict

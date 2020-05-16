@@ -1,61 +1,133 @@
-import os
+from __future__ import unicode_literals
+
 import re
 
 from .common import InfoExtractor
+from ..aes import aes_decrypt_text
+from ..compat import compat_urllib_parse_unquote
 from ..utils import (
-    compat_urllib_parse_urlparse,
-    compat_urllib_request,
-    compat_urllib_parse,
+    determine_ext,
+    ExtractorError,
+    int_or_none,
+    str_to_int,
+    strip_or_none,
+    url_or_none,
 )
-from ..aes import (
-    aes_decrypt_text
-)
+
 
 class KeezMoviesIE(InfoExtractor):
-    _VALID_URL = r'^(?:https?://)?(?:www\.)?(?P<url>keezmovies\.com/video/.+?(?P<videoid>[0-9]+))(?:[/?&]|$)'
-    _TEST = {
-        u'url': u'http://www.keezmovies.com/video/petite-asian-lady-mai-playing-in-bathtub-1214711',
-        u'file': u'1214711.mp4',
-        u'md5': u'6e297b7e789329923fcf83abb67c9289',
-        u'info_dict': {
-            u"title": u"Petite Asian Lady Mai Playing In Bathtub",
-            u"age_limit": 18,
+    _VALID_URL = r'https?://(?:www\.)?keezmovies\.com/video/(?:(?P<display_id>[^/]+)-)?(?P<id>\d+)'
+    _TESTS = [{
+        'url': 'https://www.keezmovies.com/video/arab-wife-want-it-so-bad-i-see-she-thirsty-and-has-tiny-money-18070681',
+        'md5': '2ac69cdb882055f71d82db4311732a1a',
+        'info_dict': {
+            'id': '18070681',
+            'display_id': 'arab-wife-want-it-so-bad-i-see-she-thirsty-and-has-tiny-money',
+            'ext': 'mp4',
+            'title': 'Arab wife want it so bad I see she thirsty and has tiny money.',
+            'thumbnail': None,
+            'view_count': int,
+            'age_limit': 18,
         }
-    }
+    }, {
+        'url': 'http://www.keezmovies.com/video/18070681',
+        'only_matching': True,
+    }]
+
+    def _extract_info(self, url, fatal=True):
+        mobj = re.match(self._VALID_URL, url)
+        video_id = mobj.group('id')
+        display_id = (mobj.group('display_id')
+                      if 'display_id' in mobj.groupdict()
+                      else None) or mobj.group('id')
+
+        webpage = self._download_webpage(
+            url, display_id, headers={'Cookie': 'age_verified=1'})
+
+        formats = []
+        format_urls = set()
+
+        title = None
+        thumbnail = None
+        duration = None
+        encrypted = False
+
+        def extract_format(format_url, height=None):
+            format_url = url_or_none(format_url)
+            if not format_url or not format_url.startswith(('http', '//')):
+                return
+            if format_url in format_urls:
+                return
+            format_urls.add(format_url)
+            tbr = int_or_none(self._search_regex(
+                r'[/_](\d+)[kK][/_]', format_url, 'tbr', default=None))
+            if not height:
+                height = int_or_none(self._search_regex(
+                    r'[/_](\d+)[pP][/_]', format_url, 'height', default=None))
+            if encrypted:
+                format_url = aes_decrypt_text(
+                    video_url, title, 32).decode('utf-8')
+            formats.append({
+                'url': format_url,
+                'format_id': '%dp' % height if height else None,
+                'height': height,
+                'tbr': tbr,
+            })
+
+        flashvars = self._parse_json(
+            self._search_regex(
+                r'flashvars\s*=\s*({.+?});', webpage,
+                'flashvars', default='{}'),
+            display_id, fatal=False)
+
+        if flashvars:
+            title = flashvars.get('video_title')
+            thumbnail = flashvars.get('image_url')
+            duration = int_or_none(flashvars.get('video_duration'))
+            encrypted = flashvars.get('encrypted') is True
+            for key, value in flashvars.items():
+                mobj = re.search(r'quality_(\d+)[pP]', key)
+                if mobj:
+                    extract_format(value, int(mobj.group(1)))
+            video_url = flashvars.get('video_url')
+            if video_url and determine_ext(video_url, None):
+                extract_format(video_url)
+
+        video_url = self._html_search_regex(
+            r'flashvars\.video_url\s*=\s*(["\'])(?P<url>http.+?)\1',
+            webpage, 'video url', default=None, group='url')
+        if video_url:
+            extract_format(compat_urllib_parse_unquote(video_url))
+
+        if not formats:
+            if 'title="This video is no longer available"' in webpage:
+                raise ExtractorError(
+                    'Video %s is no longer available' % video_id, expected=True)
+
+        try:
+            self._sort_formats(formats)
+        except ExtractorError:
+            if fatal:
+                raise
+
+        if not title:
+            title = self._html_search_regex(
+                r'<h1[^>]*>([^<]+)', webpage, 'title')
+
+        return webpage, {
+            'id': video_id,
+            'display_id': display_id,
+            'title': strip_or_none(title),
+            'thumbnail': thumbnail,
+            'duration': duration,
+            'age_limit': 18,
+            'formats': formats,
+        }
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('videoid')
-        url = 'http://www.' + mobj.group('url')
-
-        req = compat_urllib_request.Request(url)
-        req.add_header('Cookie', 'age_verified=1')
-        webpage = self._download_webpage(req, video_id)
-
-        # embedded video
-        mobj = re.search(r'href="([^"]+)"></iframe>', webpage)
-        if mobj:
-            embedded_url = mobj.group(1)
-            return self.url_result(embedded_url)
-
-        video_title = self._html_search_regex(r'<h1 [^>]*>([^<]+)', webpage, u'title')
-        video_url = compat_urllib_parse.unquote(self._html_search_regex(r'video_url=(.+?)&amp;', webpage, u'video_url'))
-        if webpage.find('encrypted=true')!=-1:
-            password = self._html_search_regex(r'video_title=(.+?)&amp;', webpage, u'password')
-            video_url = aes_decrypt_text(video_url, password, 32).decode('utf-8')
-        path = compat_urllib_parse_urlparse(video_url).path
-        extension = os.path.splitext(path)[1][1:]
-        format = path.split('/')[4].split('_')[:2]
-        format = "-".join(format)
-
-        age_limit = self._rta_search(webpage)
-
-        return {
-            'id': video_id,
-            'title': video_title,
-            'url': video_url,
-            'ext': extension,
-            'format': format,
-            'format_id': format,
-            'age_limit': age_limit,
-        }
+        webpage, info = self._extract_info(url, fatal=False)
+        if not info['formats']:
+            return self.url_result(url, 'Generic')
+        info['view_count'] = str_to_int(self._search_regex(
+            r'<b>([\d,.]+)</b> Views?', webpage, 'view count', fatal=False))
+        return info

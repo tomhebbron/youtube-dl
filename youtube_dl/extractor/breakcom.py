@@ -1,38 +1,91 @@
+from __future__ import unicode_literals
+
 import re
-import json
 
 from .common import InfoExtractor
-from ..utils import determine_ext
+from .youtube import YoutubeIE
+from ..utils import (
+    int_or_none,
+    url_or_none,
+)
 
 
 class BreakIE(InfoExtractor):
-    _VALID_URL = r'(?:http://)?(?:www\.)?break\.com/video/([^/]+)'
-    _TEST = {
-        u'url': u'http://www.break.com/video/when-girls-act-like-guys-2468056',
-        u'file': u'2468056.mp4',
-        u'md5': u'a3513fb1547fba4fb6cfac1bffc6c46b',
-        u'info_dict': {
-            u"title": u"When Girls Act Like D-Bags"
+    _VALID_URL = r'https?://(?:www\.)?break\.com/video/(?P<display_id>[^/]+?)(?:-(?P<id>\d+))?(?:[/?#&]|$)'
+    _TESTS = [{
+        'url': 'http://www.break.com/video/when-girls-act-like-guys-2468056',
+        'info_dict': {
+            'id': '2468056',
+            'ext': 'mp4',
+            'title': 'When Girls Act Like D-Bags',
+            'age_limit': 13,
+        },
+    }, {
+        # youtube embed
+        'url': 'http://www.break.com/video/someone-forgot-boat-brakes-work',
+        'info_dict': {
+            'id': 'RrrDLdeL2HQ',
+            'ext': 'mp4',
+            'title': 'Whale Watching Boat Crashing Into San Diego Dock',
+            'description': 'md5:afc1b2772f0a8468be51dd80eb021069',
+            'upload_date': '20160331',
+            'uploader': 'Steve Holden',
+            'uploader_id': 'sdholden07',
+        },
+        'params': {
+            'skip_download': True,
         }
-    }
+    }, {
+        'url': 'http://www.break.com/video/ugc/baby-flex-2773063',
+        'only_matching': True,
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group(1).split("-")[-1]
-        embed_url = 'http://www.break.com/embed/%s' % video_id
-        webpage = self._download_webpage(embed_url, video_id)
-        info_json = self._search_regex(r'var embedVars = ({.*?});', webpage,
-                                       u'info json', flags=re.DOTALL)
-        info = json.loads(info_json)
-        video_url = info['videoUri']
-        m_youtube = re.search(r'(https?://www\.youtube\.com/watch\?v=.*)', video_url)
-        if m_youtube is not None:
-            return self.url_result(m_youtube.group(1), 'Youtube')
-        final_url = video_url + '?' + info['AuthToken']
-        return [{
-            'id':        video_id,
-            'url':       final_url,
-            'ext':       determine_ext(final_url),
-            'title':     info['contentName'],
-            'thumbnail': info['thumbUri'],
-        }]
+        display_id, video_id = re.match(self._VALID_URL, url).groups()
+
+        webpage = self._download_webpage(url, display_id)
+
+        youtube_url = YoutubeIE._extract_url(webpage)
+        if youtube_url:
+            return self.url_result(youtube_url, ie=YoutubeIE.ie_key())
+
+        content = self._parse_json(
+            self._search_regex(
+                r'(?s)content["\']\s*:\s*(\[.+?\])\s*[,\n]', webpage,
+                'content'),
+            display_id)
+
+        formats = []
+        for video in content:
+            video_url = url_or_none(video.get('url'))
+            if not video_url:
+                continue
+            bitrate = int_or_none(self._search_regex(
+                r'(\d+)_kbps', video_url, 'tbr', default=None))
+            formats.append({
+                'url': video_url,
+                'format_id': 'http-%d' % bitrate if bitrate else 'http',
+                'tbr': bitrate,
+            })
+        self._sort_formats(formats)
+
+        title = self._search_regex(
+            (r'title["\']\s*:\s*(["\'])(?P<value>(?:(?!\1).)+)\1',
+             r'<h1[^>]*>(?P<value>[^<]+)'), webpage, 'title', group='value')
+
+        def get(key, name):
+            return int_or_none(self._search_regex(
+                r'%s["\']\s*:\s*["\'](\d+)' % key, webpage, name,
+                default=None))
+
+        age_limit = get('ratings', 'age limit')
+        video_id = video_id or get('pid', 'video id') or display_id
+
+        return {
+            'id': video_id,
+            'display_id': display_id,
+            'title': title,
+            'thumbnail': self._og_search_thumbnail(webpage),
+            'age_limit': age_limit,
+            'formats': formats,
+        }

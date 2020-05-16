@@ -1,34 +1,42 @@
 # coding: utf-8
+from __future__ import unicode_literals
+
 import re
-import time
 
 from .common import InfoExtractor
 from ..utils import (
-    compat_urllib_parse,
-    compat_urllib_request,
+    ExtractorError,
+    urlencode_postdata,
 )
 
 
 class StreamcloudIE(InfoExtractor):
-    IE_NAME = u'streamcloud.eu'
-    _VALID_URL = r'https?://streamcloud\.eu/(?P<id>[a-zA-Z0-9_-]+)/(?P<fname>[^#?]*)\.html'
+    IE_NAME = 'streamcloud.eu'
+    _VALID_URL = r'https?://streamcloud\.eu/(?P<id>[a-zA-Z0-9_-]+)(?:/(?P<fname>[^#?]*)\.html)?'
 
-    _TEST = {
-        u'url': u'http://streamcloud.eu/skp9j99s4bpz/youtube-dl_test_video_____________-BaW_jenozKc.mp4.html',
-        u'file': u'skp9j99s4bpz.mp4',
-        u'md5': u'6bea4c7fa5daaacc2a946b7146286686',
-        u'info_dict': {
-            u'title': u'youtube-dl test video  \'/\\ ä ↭',
-            u'duration': 9,
+    _TESTS = [{
+        'url': 'http://streamcloud.eu/skp9j99s4bpz/youtube-dl_test_video_____________-BaW_jenozKc.mp4.html',
+        'md5': '6bea4c7fa5daaacc2a946b7146286686',
+        'info_dict': {
+            'id': 'skp9j99s4bpz',
+            'ext': 'mp4',
+            'title': 'youtube-dl test video  \'/\\ ä ↭',
         },
-        u'skip': u'Only available from the EU'
-    }
+        'skip': 'Only available from the EU'
+    }, {
+        'url': 'http://streamcloud.eu/ua8cmfh1nbe6/NSHIP-148--KUC-NG--H264-.mp4.html',
+        'only_matching': True,
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('id')
+        video_id = self._match_id(url)
+        url = 'http://streamcloud.eu/%s' % video_id
 
         orig_webpage = self._download_webpage(url, video_id)
+
+        if '>File Not Found<' in orig_webpage:
+            raise ExtractorError(
+                'Video %s does not exist' % video_id, expected=True)
 
         fields = re.findall(r'''(?x)<input\s+
             type="(?:hidden|submit)"\s+
@@ -36,31 +44,35 @@ class StreamcloudIE(InfoExtractor):
             (?:id="[^"]+"\s+)?
             value="([^"]*)"
             ''', orig_webpage)
-        post = compat_urllib_parse.urlencode(fields)
 
-        self.to_screen('%s: Waiting for timeout' % video_id)
-        time.sleep(12)
-        headers = {
-            b'Content-Type': b'application/x-www-form-urlencoded',
-        }
-        req = compat_urllib_request.Request(url, post, headers)
+        self._sleep(6, video_id)
 
         webpage = self._download_webpage(
-            req, video_id, note=u'Downloading video page ...')
-        title = self._html_search_regex(
-            r'<h1[^>]*>([^<]+)<', webpage, u'title')
-        video_url = self._search_regex(
-            r'file:\s*"([^"]+)"', webpage, u'video URL')
-        duration_str = self._search_regex(
-            r'duration:\s*"?([0-9]+)"?', webpage, u'duration', fatal=False)
-        duration = None if duration_str is None else int(duration_str)
+            url, video_id, data=urlencode_postdata(fields), headers={
+                b'Content-Type': b'application/x-www-form-urlencoded',
+            })
+
+        try:
+            title = self._html_search_regex(
+                r'<h1[^>]*>([^<]+)<', webpage, 'title')
+            video_url = self._search_regex(
+                r'file:\s*"([^"]+)"', webpage, 'video URL')
+        except ExtractorError:
+            message = self._html_search_regex(
+                r'(?s)<div[^>]+class=(["\']).*?msgboxinfo.*?\1[^>]*>(?P<message>.+?)</div>',
+                webpage, 'message', default=None, group='message')
+            if message:
+                raise ExtractorError('%s said: %s' % (self.IE_NAME, message), expected=True)
+            raise
         thumbnail = self._search_regex(
-            r'image:\s*"([^"]+)"', webpage, u'thumbnail URL', fatal=False)
+            r'image:\s*"([^"]+)"', webpage, 'thumbnail URL', fatal=False)
 
         return {
             'id': video_id,
             'title': title,
             'url': video_url,
-            'duration': duration,
             'thumbnail': thumbnail,
+            'http_headers': {
+                'Referer': url,
+            },
         }

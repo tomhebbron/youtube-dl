@@ -4,6 +4,7 @@ import re
 
 from .common import InfoExtractor
 from ..utils import (
+    determine_ext,
     parse_duration,
     unified_strdate,
 )
@@ -21,31 +22,37 @@ class HuffPostIE(InfoExtractor):
 
     _TEST = {
         'url': 'http://live.huffingtonpost.com/r/segment/legalese-it/52dd3e4b02a7602131000677',
-        'file': '52dd3e4b02a7602131000677.mp4',
         'md5': '55f5e8981c1c80a64706a44b74833de8',
         'info_dict': {
+            'id': '52dd3e4b02a7602131000677',
+            'ext': 'mp4',
             'title': 'Legalese It! with @MikeSacksHP',
             'description': 'This week on Legalese It, Mike talks to David Bosco about his new book on the ICC, "Rough Justice," he also discusses the Virginia AG\'s historic stance on gay marriage, the execution of Edgar Tamayo, the ICC\'s delay of Kenya\'s President and more.  ',
             'duration': 1549,
             'upload_date': '20140124',
-        }
+        },
+        'params': {
+            # m3u8 download
+            'skip_download': True,
+        },
+        'expected_warnings': ['HTTP Error 404: Not Found'],
     }
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('id')
+        video_id = self._match_id(url)
 
         api_url = 'http://embed.live.huffingtonpost.com/api/segments/%s.json' % video_id
         data = self._download_json(api_url, video_id)['data']
 
         video_title = data['title']
-        duration = parse_duration(data['running_time'])
-        upload_date = unified_strdate(data['schedule']['starts_at'])
+        duration = parse_duration(data.get('running_time'))
+        upload_date = unified_strdate(
+            data.get('schedule', {}).get('starts_at') or data.get('segment_start_date_time'))
         description = data.get('description')
 
         thumbnails = []
-        for url in data['images'].values():
-            m = re.match('.*-([0-9]+x[0-9]+)\.', url)
+        for url in filter(None, data['images'].values()):
+            m = re.match(r'.*-([0-9]+x[0-9]+)\.', url)
             if not m:
                 continue
             thumbnails.append({
@@ -53,22 +60,29 @@ class HuffPostIE(InfoExtractor):
                 'resolution': m.group(1),
             })
 
-        formats = [{
-            'format': key,
-            'format_id': key.replace('/', '.'),
-            'ext': 'mp4',
-            'url': url,
-            'vcodec': 'none' if key.startswith('audio/') else None,
-        } for key, url in data['sources']['live'].items()]
-        if data.get('fivemin_id'):
-            fid = data['fivemin_id']
-            fcat = str(int(fid) // 100 + 1)
-            furl = 'http://avideos.5min.com/2/' + fcat[-3:] + '/' + fcat + '/' + fid + '.mp4'
-            formats.append({
-                'format': 'fivemin',
-                'url': furl,
-                'preference': 1,
-            })
+        formats = []
+        sources = data.get('sources', {})
+        live_sources = list(sources.get('live', {}).items()) + list(sources.get('live_again', {}).items())
+        for key, url in live_sources:
+            ext = determine_ext(url)
+            if ext == 'm3u8':
+                formats.extend(self._extract_m3u8_formats(
+                    url, video_id, ext='mp4', m3u8_id='hls', fatal=False))
+            elif ext == 'f4m':
+                formats.extend(self._extract_f4m_formats(
+                    url + '?hdcore=2.9.5', video_id, f4m_id='hds', fatal=False))
+            else:
+                formats.append({
+                    'format': key,
+                    'format_id': key.replace('/', '.'),
+                    'ext': 'mp4',
+                    'url': url,
+                    'vcodec': 'none' if key.startswith('audio/') else None,
+                })
+
+        if not formats and data.get('fivemin_id'):
+            return self.url_result('5min:%s' % data['fivemin_id'])
+
         self._sort_formats(formats)
 
         return {

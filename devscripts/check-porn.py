@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import unicode_literals
 
 """
 This script employs a VERY basic heuristic ('porn' in webpage.lower()) to check
@@ -13,7 +14,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from test.helper import get_testcases
+from test.helper import gettestcases
 from youtube_dl.utils import compat_urllib_parse_urlparse
 from youtube_dl.utils import compat_urllib_request
 
@@ -23,11 +24,11 @@ if len(sys.argv) > 1:
 else:
     METHOD = 'EURISTIC'
 
-for test in get_testcases():
+for test in gettestcases():
     if METHOD == 'EURISTIC':
         try:
             webpage = compat_urllib_request.urlopen(test['url'], timeout=10).read()
-        except:
+        except Exception:
             print('\nFail: {0}'.format(test['name']))
             continue
 

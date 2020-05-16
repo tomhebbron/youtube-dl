@@ -1,62 +1,113 @@
-import re
+# coding: utf-8
+from __future__ import unicode_literals
 
 from .common import InfoExtractor
-from ..utils import month_by_name
+from ..compat import (
+    compat_urllib_parse_unquote_plus
+)
+from ..utils import (
+    parse_duration,
+    remove_end,
+    unified_strdate,
+    urljoin
+)
 
 
 class NDTVIE(InfoExtractor):
-    _VALID_URL = r'^https?://(?:www\.)?ndtv\.com/video/player/[^/]*/[^/]*/(?P<id>[a-z0-9]+)'
+    _VALID_URL = r'https?://(?:[^/]+\.)?ndtv\.com/(?:[^/]+/)*videos?/?(?:[^/]+/)*[^/?^&]+-(?P<id>\d+)'
 
-    _TEST = {
-        u"url": u"http://www.ndtv.com/video/player/news/ndtv-exclusive-don-t-need-character-certificate-from-rahul-gandhi-says-arvind-kejriwal/300710",
-        u"file": u"300710.mp4",
-        u"md5": u"39f992dbe5fb531c395d8bbedb1e5e88",
-        u"info_dict": {
-            u"title": u"NDTV exclusive: Don't need character certificate from Rahul Gandhi, says Arvind Kejriwal",
-            u"description": u"In an exclusive interview to NDTV, Aam Aadmi Party's Arvind Kejriwal says it makes no difference to him that Rahul Gandhi said the Congress needs to learn from his party.",
-            u"upload_date": u"20131208",
-            u"duration": 1327,
-            u"thumbnail": u"http://i.ndtvimg.com/video/images/vod/medium/2013-12/big_300710_1386518307.jpg",
+    _TESTS = [
+        {
+            'url': 'https://khabar.ndtv.com/video/show/prime-time/prime-time-ill-system-and-poor-education-468818',
+            'md5': '78efcf3880ef3fd9b83d405ca94a38eb',
+            'info_dict': {
+                'id': '468818',
+                'ext': 'mp4',
+                'title': "प्राइम टाइम: सिस्टम बीमार, स्कूल बदहाल",
+                'description': 'md5:f410512f1b49672e5695dea16ef2731d',
+                'upload_date': '20170928',
+                'duration': 2218,
+                'thumbnail': r're:https?://.*\.jpg',
+            }
         },
-    }
+        {
+            # __filename is url
+            'url': 'http://movies.ndtv.com/videos/cracker-free-diwali-wishes-from-karan-johar-kriti-sanon-other-stars-470304',
+            'md5': 'f1d709352305b44443515ac56b45aa46',
+            'info_dict': {
+                'id': '470304',
+                'ext': 'mp4',
+                'title': "Cracker-Free Diwali Wishes From Karan Johar, Kriti Sanon & Other Stars",
+                'description': 'md5:f115bba1adf2f6433fa7c1ade5feb465',
+                'upload_date': '20171019',
+                'duration': 137,
+                'thumbnail': r're:https?://.*\.jpg',
+            }
+        },
+        {
+            'url': 'https://www.ndtv.com/video/news/news/delhi-s-air-quality-status-report-after-diwali-is-very-poor-470372',
+            'only_matching': True
+        },
+        {
+            'url': 'https://auto.ndtv.com/videos/the-cnb-daily-october-13-2017-469935',
+            'only_matching': True
+        },
+        {
+            'url': 'https://sports.ndtv.com/cricket/videos/2nd-t20i-rock-thrown-at-australia-cricket-team-bus-after-win-over-india-469764',
+            'only_matching': True
+        },
+        {
+            'url': 'http://gadgets.ndtv.com/videos/uncharted-the-lost-legacy-review-465568',
+            'only_matching': True
+        },
+        {
+            'url': 'http://profit.ndtv.com/videos/news/video-indian-economy-on-very-solid-track-international-monetary-fund-chief-470040',
+            'only_matching': True
+        },
+        {
+            'url': 'http://food.ndtv.com/video-basil-seeds-coconut-porridge-419083',
+            'only_matching': True
+        },
+        {
+            'url': 'https://doctor.ndtv.com/videos/top-health-stories-of-the-week-467396',
+            'only_matching': True
+        },
+        {
+            'url': 'https://swirlster.ndtv.com/video/how-to-make-friends-at-work-469324',
+            'only_matching': True
+        }
+    ]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
-        video_id = mobj.group('id')
-
+        video_id = self._match_id(url)
         webpage = self._download_webpage(url, video_id)
 
+        # '__title' does not contain extra words such as sub-site name, "Video" etc.
+        title = compat_urllib_parse_unquote_plus(
+            self._search_regex(r"__title\s*=\s*'([^']+)'", webpage, 'title', default=None)
+            or self._og_search_title(webpage))
+
         filename = self._search_regex(
-            r"__filename='([^']+)'", webpage, u'video filename')
-        video_url = (u'http://bitcast-b.bitgravity.com/ndtvod/23372/ndtv/%s' %
-                     filename)
+            r"(?:__)?filename\s*[:=]\s*'([^']+)'", webpage, 'video filename')
+        # in "movies" sub-site pages, filename is URL
+        video_url = urljoin('https://ndtvod.bc-ssl.cdn.bitgravity.com/23372/ndtv/', filename.lstrip('/'))
 
-        duration_str = filename = self._search_regex(
-            r"__duration='([^']+)'", webpage, u'duration', fatal=False)
-        duration = None if duration_str is None else int(duration_str)
+        # "doctor" sub-site has MM:SS format
+        duration = parse_duration(self._search_regex(
+            r"(?:__)?duration\s*[:=]\s*'([^']+)'", webpage, 'duration', fatal=False))
 
-        date_m = re.search(r'''(?x)
-            <p\s+class="vod_dateline">\s*
-                Published\s+On:\s*
-                (?P<monthname>[A-Za-z]+)\s+(?P<day>[0-9]+),\s*(?P<year>[0-9]+)
-            ''', webpage)
-        upload_date = None
-        assert date_m
-        if date_m is not None:
-            month = month_by_name(date_m.group('monthname'))
-            if month is not None:
-                upload_date = '%s%02d%02d' % (
-                    date_m.group('year'), month, int(date_m.group('day')))
+        # "sports", "doctor", "swirlster" sub-sites don't have 'publish-date'
+        upload_date = unified_strdate(self._html_search_meta(
+            'publish-date', webpage, 'upload date', default=None) or self._html_search_meta(
+            'uploadDate', webpage, 'upload date', default=None) or self._search_regex(
+            r'datePublished"\s*:\s*"([^"]+)"', webpage, 'upload date', fatal=False))
 
-        description = self._og_search_description(webpage)
-        READ_MORE = u' (Read more)'
-        if description.endswith(READ_MORE):
-            description = description[:-len(READ_MORE)]
+        description = remove_end(self._og_search_description(webpage), ' (Read more)')
 
         return {
             'id': video_id,
             'url': video_url,
-            'title': self._og_search_title(webpage),
+            'title': title,
             'description': description,
             'thumbnail': self._og_search_thumbnail(webpage),
             'duration': duration,

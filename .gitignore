@@ -1,5 +1,6 @@
 *.pyc
 *.pyo
+*.class
 *~
 *.DS_Store
 wine-py2exe/
@@ -11,6 +12,8 @@ MANIFEST
 README.txt
 youtube-dl.1
 youtube-dl.bash-completion
+youtube-dl.fish
+youtube_dl/extractor/lazy_extractors.py
 youtube-dl
 youtube-dl.exe
 youtube-dl.tar.gz
@@ -19,13 +22,33 @@ cover/
 updates_key.pem
 *.egg-info
 *.srt
+*.ttml
 *.sbv
 *.vtt
 *.flv
 *.mp4
 *.m4a
 *.m4v
+*.mp3
+*.3gp
+*.wav
+*.ape
+*.mkv
+*.swf
 *.part
-test/testdata
+*.ytdl
+*.swp
+test/local_parameters.json
 .tox
 *.mp3
+youtube-dl.zsh
+
+# IntelliJ related files
+.idea
+*.iml
+
+tmp/
+venv/
+
+# VS Code related files
+.vscode

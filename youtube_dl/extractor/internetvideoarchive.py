@@ -1,84 +1,64 @@
+from __future__ import unicode_literals
+
+import json
 import re
 
 from .common import InfoExtractor
-from ..utils import (
+from ..compat import (
+    compat_parse_qs,
     compat_urlparse,
-    compat_urllib_parse,
-    xpath_with_ns,
 )
 
 
 class InternetVideoArchiveIE(InfoExtractor):
-    _VALID_URL = r'https?://video\.internetvideoarchive\.net/flash/players/.*?\?.*?publishedid.*?'
+    _VALID_URL = r'https?://video\.internetvideoarchive\.net/(?:player|flash/players)/.*?\?.*?publishedid.*?'
 
     _TEST = {
-        u'url': u'http://video.internetvideoarchive.net/flash/players/flashconfiguration.aspx?customerid=69249&publishedid=452693&playerid=247',
-        u'file': u'452693.mp4',
-        u'info_dict': {
-            u'title': u'SKYFALL',
-            u'description': u'In SKYFALL, Bond\'s loyalty to M is tested as her past comes back to haunt her. As MI6 comes under attack, 007 must track down and destroy the threat, no matter how personal the cost.',
-            u'duration': 153,
+        'url': 'http://video.internetvideoarchive.net/player/6/configuration.ashx?customerid=69249&publishedid=194487&reporttag=vdbetatitle&playerid=641&autolist=0&domain=www.videodetective.com&maxrate=high&minrate=low&socialplayer=false',
+        'info_dict': {
+            'id': '194487',
+            'ext': 'mp4',
+            'title': 'Kick-Ass 2',
+            'description': 'md5:c189d5b7280400630a1d3dd17eaa8d8a',
+        },
+        'params': {
+            # m3u8 download
+            'skip_download': True,
         },
     }
 
     @staticmethod
-    def _build_url(query):
-        return 'http://video.internetvideoarchive.net/flash/players/flashconfiguration.aspx?' + query
-
-    @staticmethod
-    def _clean_query(query):
-        NEEDED_ARGS = ['publishedid', 'customerid']
-        query_dic = compat_urlparse.parse_qs(query)
-        cleaned_dic = dict((k,v[0]) for (k,v) in query_dic.items() if k in NEEDED_ARGS)
-        # Other player ids return m3u8 urls
-        cleaned_dic['playerid'] = '247'
-        cleaned_dic['videokbrate'] = '100000'
-        return compat_urllib_parse.urlencode(cleaned_dic)
+    def _build_json_url(query):
+        return 'http://video.internetvideoarchive.net/player/6/configuration.ashx?' + query
 
     def _real_extract(self, url):
-        query = compat_urlparse.urlparse(url).query
-        query_dic = compat_urlparse.parse_qs(query)
-        video_id = query_dic['publishedid'][0]
-        url = self._build_url(query)
-
-        flashconfiguration = self._download_xml(url, video_id,
-            u'Downloading flash configuration')
-        file_url = flashconfiguration.find('file').text
-        file_url = file_url.replace('/playlist.aspx', '/mrssplaylist.aspx')
-        # Replace some of the parameters in the query to get the best quality
-        # and http links (no m3u8 manifests)
-        file_url = re.sub(r'(?<=\?)(.+)$',
-            lambda m: self._clean_query(m.group()),
-            file_url)
-        info = self._download_xml(file_url, video_id,
-            u'Downloading video info')
-        item = info.find('channel/item')
-
-        def _bp(p):
-            return xpath_with_ns(p,
-                {'media': 'http://search.yahoo.com/mrss/',
-                'jwplayer': 'http://developer.longtailvideo.com/trac/wiki/FlashFormats'})
-        formats = []
-        for content in item.findall(_bp('media:group/media:content')):
-            attr = content.attrib
-            f_url = attr['url']
-            width = int(attr['width'])
-            bitrate = int(attr['bitrate'])
-            format_id = '%d-%dk' % (width, bitrate)
-            formats.append({
-                'format_id': format_id,
-                'url': f_url,
-                'width': width,
-                'tbr': bitrate,
-            })
-
+        query = compat_parse_qs(compat_urlparse.urlparse(url).query)
+        video_id = query['publishedid'][0]
+        data = self._download_json(
+            'https://video.internetvideoarchive.net/videojs7/videojs7.ivasettings.ashx',
+            video_id, data=json.dumps({
+                'customerid': query['customerid'][0],
+                'publishedid': video_id,
+            }).encode())
+        title = data['Title']
+        formats = self._extract_m3u8_formats(
+            data['VideoUrl'], video_id, 'mp4',
+            'm3u8_native', m3u8_id='hls', fatal=False)
+        file_url = formats[0]['url']
+        if '.ism/' in file_url:
+            replace_url = lambda x: re.sub(r'\.ism/[^?]+', '.ism/' + x, file_url)
+            formats.extend(self._extract_f4m_formats(
+                replace_url('.f4m'), video_id, f4m_id='hds', fatal=False))
+            formats.extend(self._extract_mpd_formats(
+                replace_url('.mpd'), video_id, mpd_id='dash', fatal=False))
+            formats.extend(self._extract_ism_formats(
+                replace_url('Manifest'), video_id, ism_id='mss', fatal=False))
         self._sort_formats(formats)
 
         return {
             'id': video_id,
-            'title': item.find('title').text,
+            'title': title,
             'formats': formats,
-            'thumbnail': item.find(_bp('media:thumbnail')).attrib['url'],
-            'description': item.find('description').text,
-            'duration': int(attr['duration']),
+            'thumbnail': data.get('PosterUrl'),
+            'description': data.get('Description'),
         }

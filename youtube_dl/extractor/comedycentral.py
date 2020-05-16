@@ -1,200 +1,142 @@
 from __future__ import unicode_literals
 
-import re
-
-from .common import InfoExtractor
 from .mtv import MTVServicesInfoExtractor
-from ..utils import (
-    compat_str,
-    compat_urllib_parse,
-
-    ExtractorError,
-    unified_strdate,
-)
+from .common import InfoExtractor
 
 
 class ComedyCentralIE(MTVServicesInfoExtractor):
-    _VALID_URL = r'''(?x)https?://(?:www\.)?comedycentral\.com/
-        (video-clips|episodes|cc-studios|video-collections)
+    _VALID_URL = r'''(?x)https?://(?:www\.)?cc\.com/
+        (video-clips|episodes|cc-studios|video-collections|shows(?=/[^/]+/(?!full-episodes)))
         /(?P<title>.*)'''
     _FEED_URL = 'http://comedycentral.com/feeds/mrss/'
 
-    _TEST = {
-        'url': 'http://www.comedycentral.com/video-clips/kllhuv/stand-up-greg-fitzsimmons--uncensored---too-good-of-a-mother',
-        'md5': '4167875aae411f903b751a21f357f1ee',
+    _TESTS = [{
+        'url': 'http://www.cc.com/video-clips/kllhuv/stand-up-greg-fitzsimmons--uncensored---too-good-of-a-mother',
+        'md5': 'c4f48e9eda1b16dd10add0744344b6d8',
         'info_dict': {
             'id': 'cef0cbb3-e776-4bc9-b62e-8016deccb354',
             'ext': 'mp4',
-            'title': 'CC:Stand-Up|Greg Fitzsimmons: Life on Stage|Uncensored - Too Good of a Mother',
+            'title': 'CC:Stand-Up|August 18, 2013|1|0101|Uncensored - Too Good of a Mother',
             'description': 'After a certain point, breastfeeding becomes c**kblocking.',
+            'timestamp': 1376798400,
+            'upload_date': '20130818',
         },
-    }
+    }, {
+        'url': 'http://www.cc.com/shows/the-daily-show-with-trevor-noah/interviews/6yx39d/exclusive-rand-paul-extended-interview',
+        'only_matching': True,
+    }]
 
 
-class ComedyCentralShowsIE(InfoExtractor):
-    IE_DESC = 'The Daily Show / Colbert Report'
-    # urls can be abbreviations like :thedailyshow or :colbert
-    # urls for episodes like:
-    # or urls for clips like: http://www.thedailyshow.com/watch/mon-december-10-2012/any-given-gun-day
-    #                     or: http://www.colbertnation.com/the-colbert-report-videos/421667/november-29-2012/moon-shattering-news
-    #                     or: http://www.colbertnation.com/the-colbert-report-collections/422008/festival-of-lights/79524
-    _VALID_URL = r"""^(:(?P<shortname>tds|thedailyshow|cr|colbert|colbertnation|colbertreport)
-                      |(https?://)?(www\.)?
-                          (?P<showname>thedailyshow|colbertnation)\.com/
-                         (full-episodes/(?P<episode>.*)|
-                          (?P<clip>
-                              (the-colbert-report-(videos|collections)/(?P<clipID>[0-9]+)/[^/]*/(?P<cntitle>.*?))
-                              |(watch/(?P<date>[^/]*)/(?P<tdstitle>.*)))|
-                          (?P<interview>
-                              extended-interviews/(?P<interID>[0-9]+)/playlist_tds_extended_(?P<interview_title>.*?)/.*?)))
-                     $"""
-    _TEST = {
-        'url': 'http://www.thedailyshow.com/watch/thu-december-13-2012/kristen-stewart',
-        'file': '422212.mp4',
-        'md5': '4e2f5cb088a83cd8cdb7756132f9739d',
+class ComedyCentralFullEpisodesIE(MTVServicesInfoExtractor):
+    _VALID_URL = r'''(?x)https?://(?:www\.)?cc\.com/
+        (?:full-episodes|shows(?=/[^/]+/full-episodes))
+        /(?P<id>[^?]+)'''
+    _FEED_URL = 'http://comedycentral.com/feeds/mrss/'
+
+    _TESTS = [{
+        'url': 'http://www.cc.com/full-episodes/pv391a/the-daily-show-with-trevor-noah-november-28--2016---ryan-speedo-green-season-22-ep-22028',
         'info_dict': {
-            "upload_date": "20121214",
-            "description": "Kristen Stewart",
-            "uploader": "thedailyshow",
-            "title": "thedailyshow-kristen-stewart part 1"
-        }
-    }
-
-    _available_formats = ['3500', '2200', '1700', '1200', '750', '400']
-
-    _video_extensions = {
-        '3500': 'mp4',
-        '2200': 'mp4',
-        '1700': 'mp4',
-        '1200': 'mp4',
-        '750': 'mp4',
-        '400': 'mp4',
-    }
-    _video_dimensions = {
-        '3500': (1280, 720),
-        '2200': (960, 540),
-        '1700': (768, 432),
-        '1200': (640, 360),
-        '750': (512, 288),
-        '400': (384, 216),
-    }
-
-    @classmethod
-    def suitable(cls, url):
-        """Receives a URL and returns True if suitable for this IE."""
-        return re.match(cls._VALID_URL, url, re.VERBOSE) is not None
-
-    @staticmethod
-    def _transform_rtmp_url(rtmp_video_url):
-        m = re.match(r'^rtmpe?://.*?/(?P<finalid>gsp\.comedystor/.*)$', rtmp_video_url)
-        if not m:
-            raise ExtractorError('Cannot transform RTMP url')
-        base = 'http://mtvnmobile.vo.llnwd.net/kip0/_pxn=1+_pxI0=Ripod-h264+_pxL0=undefined+_pxM0=+_pxK=18639+_pxE=mp4/44620/mtvnorigin/'
-        return base + m.group('finalid')
+            'description': 'Donald Trump is accused of exploiting his president-elect status for personal gain, Cuban leader Fidel Castro dies, and Ryan Speedo Green discusses "Sing for Your Life."',
+            'title': 'November 28, 2016 - Ryan Speedo Green',
+        },
+        'playlist_count': 4,
+    }, {
+        'url': 'http://www.cc.com/shows/the-daily-show-with-trevor-noah/full-episodes',
+        'only_matching': True,
+    }]
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url, re.VERBOSE)
-        if mobj is None:
-            raise ExtractorError('Invalid URL: %s' % url)
+        playlist_id = self._match_id(url)
+        webpage = self._download_webpage(url, playlist_id)
+        mgid = self._extract_triforce_mgid(webpage, data_zone='t2_lc_promo1')
+        videos_info = self._get_videos_info(mgid)
+        return videos_info
 
-        if mobj.group('shortname'):
-            if mobj.group('shortname') in ('tds', 'thedailyshow'):
-                url = 'http://www.thedailyshow.com/full-episodes/'
-            else:
-                url = 'http://www.colbertnation.com/full-episodes/'
-            mobj = re.match(self._VALID_URL, url, re.VERBOSE)
-            assert mobj is not None
 
-        if mobj.group('clip'):
-            if mobj.group('showname') == 'thedailyshow':
-                epTitle = mobj.group('tdstitle')
-            else:
-                epTitle = mobj.group('cntitle')
-            dlNewest = False
-        elif mobj.group('interview'):
-            epTitle = mobj.group('interview_title')
-            dlNewest = False
-        else:
-            dlNewest = not mobj.group('episode')
-            if dlNewest:
-                epTitle = mobj.group('showname')
-            else:
-                epTitle = mobj.group('episode')
+class ToshIE(MTVServicesInfoExtractor):
+    IE_DESC = 'Tosh.0'
+    _VALID_URL = r'^https?://tosh\.cc\.com/video-(?:clips|collections)/[^/]+/(?P<videotitle>[^/?#]+)'
+    _FEED_URL = 'http://tosh.cc.com/feeds/mrss'
 
-        self.report_extraction(epTitle)
-        webpage,htmlHandle = self._download_webpage_handle(url, epTitle)
-        if dlNewest:
-            url = htmlHandle.geturl()
-            mobj = re.match(self._VALID_URL, url, re.VERBOSE)
-            if mobj is None:
-                raise ExtractorError('Invalid redirected URL: ' + url)
-            if mobj.group('episode') == '':
-                raise ExtractorError('Redirected URL is still not specific: ' + url)
-            epTitle = mobj.group('episode')
+    _TESTS = [{
+        'url': 'http://tosh.cc.com/video-clips/68g93d/twitter-users-share-summer-plans',
+        'info_dict': {
+            'description': 'Tosh asked fans to share their summer plans.',
+            'title': 'Twitter Users Share Summer Plans',
+        },
+        'playlist': [{
+            'md5': 'f269e88114c1805bb6d7653fecea9e06',
+            'info_dict': {
+                'id': '90498ec2-ed00-11e0-aca6-0026b9414f30',
+                'ext': 'mp4',
+                'title': 'Tosh.0|June 9, 2077|2|211|Twitter Users Share Summer Plans',
+                'description': 'Tosh asked fans to share their summer plans.',
+                'thumbnail': r're:^https?://.*\.jpg',
+                # It's really reported to be published on year 2077
+                'upload_date': '20770610',
+                'timestamp': 3390510600,
+                'subtitles': {
+                    'en': 'mincount:3',
+                },
+            },
+        }]
+    }, {
+        'url': 'http://tosh.cc.com/video-collections/x2iz7k/just-plain-foul/m5q4fp',
+        'only_matching': True,
+    }]
 
-        mMovieParams = re.findall('(?:<param name="movie" value="|var url = ")(http://media.mtvnservices.com/([^"]*(?:episode|video).*?:.*?))"', webpage)
 
-        if len(mMovieParams) == 0:
-            # The Colbert Report embeds the information in a without
-            # a URL prefix; so extract the alternate reference
-            # and then add the URL prefix manually.
+class ComedyCentralTVIE(MTVServicesInfoExtractor):
+    _VALID_URL = r'https?://(?:www\.)?comedycentral\.tv/(?:staffeln|shows)/(?P<id>[^/?#&]+)'
+    _TESTS = [{
+        'url': 'http://www.comedycentral.tv/staffeln/7436-the-mindy-project-staffel-4',
+        'info_dict': {
+            'id': 'local_playlist-f99b626bdfe13568579a',
+            'ext': 'flv',
+            'title': 'Episode_the-mindy-project_shows_season-4_episode-3_full-episode_part1',
+        },
+        'params': {
+            # rtmp download
+            'skip_download': True,
+        },
+    }, {
+        'url': 'http://www.comedycentral.tv/shows/1074-workaholics',
+        'only_matching': True,
+    }, {
+        'url': 'http://www.comedycentral.tv/shows/1727-the-mindy-project/bonus',
+        'only_matching': True,
+    }]
 
-            altMovieParams = re.findall('data-mgid="([^"]*(?:episode|video).*?:.*?)"', webpage)
-            if len(altMovieParams) == 0:
-                raise ExtractorError('unable to find Flash URL in webpage ' + url)
-            else:
-                mMovieParams = [("http://media.mtvnservices.com/" + altMovieParams[0], altMovieParams[0])]
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
 
-        uri = mMovieParams[0][1]
-        indexUrl = 'http://shadow.comedycentral.com/feeds/video_player/mrss/?' + compat_urllib_parse.urlencode({'uri': uri})
-        idoc = self._download_xml(indexUrl, epTitle,
-                                          'Downloading show index',
-                                          'unable to download episode index')
+        webpage = self._download_webpage(url, video_id)
 
-        results = []
+        mrss_url = self._search_regex(
+            r'data-mrss=(["\'])(?P<url>(?:(?!\1).)+)\1',
+            webpage, 'mrss url', group='url')
 
-        itemEls = idoc.findall('.//item')
-        for partNum,itemEl in enumerate(itemEls):
-            mediaId = itemEl.findall('./guid')[0].text
-            shortMediaId = mediaId.split(':')[-1]
-            showId = mediaId.split(':')[-2].replace('.com', '')
-            officialTitle = itemEl.findall('./title')[0].text
-            officialDate = unified_strdate(itemEl.findall('./pubDate')[0].text)
+        return self._get_videos_info_from_url(mrss_url, video_id)
 
-            configUrl = ('http://www.comedycentral.com/global/feeds/entertainment/media/mediaGenEntertainment.jhtml?' +
-                        compat_urllib_parse.urlencode({'uri': mediaId}))
-            cdoc = self._download_xml(configUrl, epTitle,
-                                               'Downloading configuration for %s' % shortMediaId)
 
-            turls = []
-            for rendition in cdoc.findall('.//rendition'):
-                finfo = (rendition.attrib['bitrate'], rendition.findall('./src')[0].text)
-                turls.append(finfo)
+class ComedyCentralShortnameIE(InfoExtractor):
+    _VALID_URL = r'^:(?P<id>tds|thedailyshow|theopposition)$'
+    _TESTS = [{
+        'url': ':tds',
+        'only_matching': True,
+    }, {
+        'url': ':thedailyshow',
+        'only_matching': True,
+    }, {
+        'url': ':theopposition',
+        'only_matching': True,
+    }]
 
-            if len(turls) == 0:
-                self._downloader.report_error('unable to download ' + mediaId + ': No videos found')
-                continue
-
-            formats = []
-            for format, rtmp_video_url in turls:
-                w, h = self._video_dimensions.get(format, (None, None))
-                formats.append({
-                    'url': self._transform_rtmp_url(rtmp_video_url),
-                    'ext': self._video_extensions.get(format, 'mp4'),
-                    'format_id': format,
-                    'height': h,
-                    'width': w,
-                })
-
-            effTitle = showId + '-' + epTitle + ' part ' + compat_str(partNum+1)
-            results.append({
-                'id': shortMediaId,
-                'formats': formats,
-                'uploader': showId,
-                'upload_date': officialDate,
-                'title': effTitle,
-                'thumbnail': None,
-                'description': compat_str(officialTitle),
-            })
-
-        return results
+    def _real_extract(self, url):
+        video_id = self._match_id(url)
+        shortcut_map = {
+            'tds': 'http://www.cc.com/shows/the-daily-show-with-trevor-noah/full-episodes',
+            'thedailyshow': 'http://www.cc.com/shows/the-daily-show-with-trevor-noah/full-episodes',
+            'theopposition': 'http://www.cc.com/shows/the-opposition-with-jordan-klepper/full-episodes',
+        }
+        return self.url_result(shortcut_map[video_id])

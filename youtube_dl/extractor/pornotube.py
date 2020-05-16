@@ -1,53 +1,85 @@
-import re
+from __future__ import unicode_literals
+
+import json
 
 from .common import InfoExtractor
-from ..utils import (
-    compat_urllib_parse,
-
-    unified_strdate,
-)
+from ..utils import int_or_none
 
 
 class PornotubeIE(InfoExtractor):
-    _VALID_URL = r'^(?:https?://)?(?:\w+\.)?pornotube\.com(/c/(?P<channel>[0-9]+))?(/m/(?P<videoid>[0-9]+))(/(?P<title>.+))$'
+    _VALID_URL = r'https?://(?:\w+\.)?pornotube\.com/(?:[^?#]*?)/video/(?P<id>[0-9]+)'
     _TEST = {
-        u'url': u'http://pornotube.com/c/173/m/1689755/Marilyn-Monroe-Bathing',
-        u'file': u'1689755.flv',
-        u'md5': u'374dd6dcedd24234453b295209aa69b6',
-        u'info_dict': {
-            u"upload_date": u"20090708", 
-            u"title": u"Marilyn-Monroe-Bathing",
-            u"age_limit": 18
+        'url': 'http://www.pornotube.com/orientation/straight/video/4964/title/weird-hot-and-wet-science',
+        'md5': '60fc5a4f0d93a97968fc7999d98260c9',
+        'info_dict': {
+            'id': '4964',
+            'ext': 'mp4',
+            'upload_date': '20141203',
+            'title': 'Weird Hot and Wet Science',
+            'description': 'md5:a8304bef7ef06cb4ab476ca6029b01b0',
+            'categories': ['Adult Humor', 'Blondes'],
+            'uploader': 'Alpha Blue Archives',
+            'thumbnail': r're:^https?://.*\.jpg$',
+            'timestamp': 1417582800,
+            'age_limit': 18,
         }
     }
 
     def _real_extract(self, url):
-        mobj = re.match(self._VALID_URL, url)
+        video_id = self._match_id(url)
 
-        video_id = mobj.group('videoid')
-        video_title = mobj.group('title')
+        token = self._download_json(
+            'https://api.aebn.net/auth/v2/origins/authenticate',
+            video_id, note='Downloading token',
+            data=json.dumps({'credentials': 'Clip Application'}).encode('utf-8'),
+            headers={
+                'Content-Type': 'application/json',
+                'Origin': 'http://www.pornotube.com',
+            })['tokenKey']
 
-        # Get webpage content
-        webpage = self._download_webpage(url, video_id)
+        video_url = self._download_json(
+            'https://api.aebn.net/delivery/v1/clips/%s/MP4' % video_id,
+            video_id, note='Downloading delivery information',
+            headers={'Authorization': token})['mediaUrl']
 
-        # Get the video URL
-        VIDEO_URL_RE = r'url: "(?P<url>http://video[0-9].pornotube.com/.+\.flv)",'
-        video_url = self._search_regex(VIDEO_URL_RE, webpage, u'video url')
-        video_url = compat_urllib_parse.unquote(video_url)
+        FIELDS = (
+            'title', 'description', 'startSecond', 'endSecond', 'publishDate',
+            'studios{name}', 'categories{name}', 'movieId', 'primaryImageNumber'
+        )
 
-        #Get the uploaded date
-        VIDEO_UPLOADED_RE = r'<div class="video_added_by">Added (?P<date>[0-9\/]+) by'
-        upload_date = self._html_search_regex(VIDEO_UPLOADED_RE, webpage, u'upload date', fatal=False)
-        if upload_date: upload_date = unified_strdate(upload_date)
-        age_limit = self._rta_search(webpage)
+        info = self._download_json(
+            'https://api.aebn.net/content/v2/clips/%s?fields=%s'
+            % (video_id, ','.join(FIELDS)), video_id,
+            note='Downloading metadata',
+            headers={'Authorization': token})
 
-        info = {'id': video_id,
-                'url': video_url,
-                'uploader': None,
-                'upload_date': upload_date,
-                'title': video_title,
-                'ext': 'flv',
-                'format': 'flv',
-                'age_limit': age_limit}
+        if isinstance(info, list):
+            info = info[0]
 
-        return [info]
+        title = info['title']
+
+        timestamp = int_or_none(info.get('publishDate'), scale=1000)
+        uploader = info.get('studios', [{}])[0].get('name')
+        movie_id = info.get('movieId')
+        primary_image_number = info.get('primaryImageNumber')
+        thumbnail = None
+        if movie_id and primary_image_number:
+            thumbnail = 'http://pic.aebn.net/dis/t/%s/%s_%08d.jpg' % (
+                movie_id, movie_id, primary_image_number)
+        start = int_or_none(info.get('startSecond'))
+        end = int_or_none(info.get('endSecond'))
+        duration = end - start if start and end else None
+        categories = [c['name'] for c in info.get('categories', []) if c.get('name')]
+
+        return {
+            'id': video_id,
+            'url': video_url,
+            'title': title,
+            'description': info.get('description'),
+            'duration': duration,
+            'timestamp': timestamp,
+            'uploader': uploader,
+            'thumbnail': thumbnail,
+            'categories': categories,
+            'age_limit': 18,
+        }

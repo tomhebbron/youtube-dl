@@ -1,72 +1,157 @@
 # coding: utf-8
+from __future__ import unicode_literals
 
-import json
 import re
 
 from .common import InfoExtractor
-
+from ..compat import compat_str
 from ..utils import (
+    ExtractorError,
     unified_strdate,
+    HEADRequest,
+    int_or_none,
 )
 
 
 class WatIE(InfoExtractor):
-    _VALID_URL=r'http://www\.wat\.tv/.*-(?P<shortID>.*?)_.*?\.html'
+    _VALID_URL = r'(?:wat:|https?://(?:www\.)?wat\.tv/video/.*-)(?P<id>[0-9a-z]+)'
     IE_NAME = 'wat.tv'
-    _TEST = {
-        u'url': u'http://www.wat.tv/video/world-war-philadelphia-vost-6bv55_2fjr7_.html',
-        u'file': u'10631273.mp4',
-        u'md5': u'd8b2231e1e333acd12aad94b80937e19',
-        u'info_dict': {
-            u'title': u'World War Z - Philadelphia VOST',
-            u'description': u'La menace est partout. Que se passe-t-il à Philadelphia ?\r\nWORLD WAR Z, avec Brad Pitt, au cinéma le 3 juillet.\r\nhttp://www.worldwarz.fr',
+    _TESTS = [
+        {
+            'url': 'http://www.wat.tv/video/soupe-figues-l-orange-aux-epices-6z1uz_2hvf7_.html',
+            'info_dict': {
+                'id': '11713067',
+                'ext': 'mp4',
+                'title': 'Soupe de figues à l\'orange et aux épices',
+                'description': 'Retrouvez l\'émission "Petits plats en équilibre", diffusée le 18 août 2014.',
+                'upload_date': '20140819',
+                'duration': 120,
+            },
+            'params': {
+                # m3u8 download
+                'skip_download': True,
+            },
+            'expected_warnings': ['HTTP Error 404'],
         },
-        u'skip': u'Sometimes wat serves the whole file with the --test option',
-    }
-    
-    def download_video_info(self, real_id):
-        # 'contentv4' is used in the website, but it also returns the related
-        # videos, we don't need them
-        info = self._download_webpage('http://www.wat.tv/interface/contentv3/' + real_id, real_id, 'Downloading video info')
-        info = json.loads(info)
-        return info['media']
+        {
+            'url': 'http://www.wat.tv/video/gregory-lemarchal-voix-ange-6z1v7_6ygkj_.html',
+            'md5': 'b16574df2c3cd1a36ca0098f2a791925',
+            'info_dict': {
+                'id': '11713075',
+                'ext': 'mp4',
+                'title': 'Grégory Lemarchal, une voix d\'ange depuis 10 ans (1/3)',
+                'upload_date': '20140816',
+            },
+            'expected_warnings': ["Ce contenu n'est pas disponible pour l'instant."],
+        },
+    ]
 
+    _FORMATS = (
+        (200, 416, 234),
+        (400, 480, 270),
+        (600, 640, 360),
+        (1200, 640, 360),
+        (1800, 960, 540),
+        (2500, 1280, 720),
+    )
 
     def _real_extract(self, url):
-        def real_id_for_chapter(chapter):
-            return chapter['tc_start'].split('-')[0]
-        mobj = re.match(self._VALID_URL, url)
-        short_id = mobj.group('shortID')
-        webpage = self._download_webpage(url, short_id)
-        real_id = self._search_regex(r'xtpage = ".*-(.*?)";', webpage, 'real id')
+        video_id = self._match_id(url)
+        video_id = video_id if video_id.isdigit() and len(video_id) > 6 else compat_str(int(video_id, 36))
 
-        video_info = self.download_video_info(real_id)
+        # 'contentv4' is used in the website, but it also returns the related
+        # videos, we don't need them
+        video_data = self._download_json(
+            'http://www.wat.tv/interface/contentv4s/' + video_id, video_id)
+        video_info = video_data['media']
+
+        error_desc = video_info.get('error_desc')
+        if error_desc:
+            self.report_warning(
+                '%s returned error: %s' % (self.IE_NAME, error_desc))
+
         chapters = video_info['chapters']
-        first_chapter = chapters[0]
+        if chapters:
+            first_chapter = chapters[0]
 
-        if real_id_for_chapter(first_chapter) != real_id:
-            self.to_screen('Multipart video detected')
-            chapter_urls = []
-            for chapter in chapters:
-                chapter_id = real_id_for_chapter(chapter)
-                # Yes, when we this chapter is processed by WatIE,
-                # it will download the info again
-                chapter_info = self.download_video_info(chapter_id)
-                chapter_urls.append(chapter_info['url'])
-            entries = [self.url_result(chapter_url) for chapter_url in chapter_urls]
-            return self.playlist_result(entries, real_id, video_info['title'])
+            def video_id_for_chapter(chapter):
+                return chapter['tc_start'].split('-')[0]
 
-        # Otherwise we can continue and extract just one part, we have to use
-        # the short id for getting the video url
-        info = {'id': real_id,
-                'url': 'http://wat.tv/get/android5/%s.mp4' % real_id,
-                'ext': 'mp4',
-                'title': first_chapter['title'],
-                'thumbnail': first_chapter['preview'],
-                'description': first_chapter['description'],
-                'view_count': video_info['views'],
-                }
-        if 'date_diffusion' in first_chapter:
-            info['upload_date'] = unified_strdate(first_chapter['date_diffusion'])
+            if video_id_for_chapter(first_chapter) != video_id:
+                self.to_screen('Multipart video detected')
+                entries = [self.url_result('wat:%s' % video_id_for_chapter(chapter)) for chapter in chapters]
+                return self.playlist_result(entries, video_id, video_info['title'])
+            # Otherwise we can continue and extract just one part, we have to use
+            # the video id for getting the video url
+        else:
+            first_chapter = video_info
 
-        return info
+        title = first_chapter['title']
+
+        def extract_url(path_template, url_type):
+            req_url = 'http://www.wat.tv/get/%s' % (path_template % video_id)
+            head = self._request_webpage(HEADRequest(req_url), video_id, 'Extracting %s url' % url_type, fatal=False)
+            if head:
+                red_url = head.geturl()
+                if req_url != red_url:
+                    return red_url
+            return None
+
+        def remove_bitrate_limit(manifest_url):
+            return re.sub(r'(?:max|min)_bitrate=\d+&?', '', manifest_url)
+
+        formats = []
+        try:
+            alt_urls = lambda manifest_url: [re.sub(r'(?:wdv|ssm)?\.ism/', repl + '.ism/', manifest_url) for repl in ('', 'ssm')]
+            manifest_urls = self._download_json(
+                'http://www.wat.tv/get/webhtml/' + video_id, video_id)
+            m3u8_url = manifest_urls.get('hls')
+            if m3u8_url:
+                m3u8_url = remove_bitrate_limit(m3u8_url)
+                for m3u8_alt_url in alt_urls(m3u8_url):
+                    formats.extend(self._extract_m3u8_formats(
+                        m3u8_alt_url, video_id, 'mp4',
+                        'm3u8_native', m3u8_id='hls', fatal=False))
+                    formats.extend(self._extract_f4m_formats(
+                        m3u8_alt_url.replace('ios', 'web').replace('.m3u8', '.f4m'),
+                        video_id, f4m_id='hds', fatal=False))
+            mpd_url = manifest_urls.get('mpd')
+            if mpd_url:
+                mpd_url = remove_bitrate_limit(mpd_url)
+                for mpd_alt_url in alt_urls(mpd_url):
+                    formats.extend(self._extract_mpd_formats(
+                        mpd_alt_url, video_id, mpd_id='dash', fatal=False))
+            self._sort_formats(formats)
+        except ExtractorError:
+            abr = 64
+            for vbr, width, height in self._FORMATS:
+                tbr = vbr + abr
+                format_id = 'http-%s' % tbr
+                fmt_url = 'http://dnl.adv.tf1.fr/2/USP-0x0/%s/%s/%s/ssm/%s-%s-64k.mp4' % (video_id[-4:-2], video_id[-2:], video_id, video_id, vbr)
+                if self._is_valid_url(fmt_url, video_id, format_id):
+                    formats.append({
+                        'format_id': format_id,
+                        'url': fmt_url,
+                        'vbr': vbr,
+                        'abr': abr,
+                        'width': width,
+                        'height': height,
+                    })
+
+        date_diffusion = first_chapter.get('date_diffusion') or video_data.get('configv4', {}).get('estatS4')
+        upload_date = unified_strdate(date_diffusion) if date_diffusion else None
+        duration = None
+        files = video_info['files']
+        if files:
+            duration = int_or_none(files[0].get('duration'))
+
+        return {
+            'id': video_id,
+            'title': title,
+            'thumbnail': first_chapter.get('preview'),
+            'description': first_chapter.get('description'),
+            'view_count': int_or_none(video_info.get('views')),
+            'upload_date': upload_date,
+            'duration': duration,
+            'formats': formats,
+        }
