@@ -28,3 +28,4 @@ updates_key.pem
 *.part
 test/testdata
 .tox
+*.mp3
